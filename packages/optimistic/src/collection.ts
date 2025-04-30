@@ -1,9 +1,11 @@
-import { Derived, Store, batch } from "@tanstack/store"
+import { Derived, Effect, Store, batch } from "@tanstack/store"
 import { withArrayChangeTracking, withChangeTracking } from "./proxy"
 import { getTransactionManager } from "./TransactionManager"
 import { TransactionStore } from "./TransactionStore"
+import { getGlobalVersion } from "./utils"
 import type {
   ChangeMessage,
+  ChangesPayload,
   CollectionConfig,
   InsertConfig,
   OperationConfig,
@@ -155,10 +157,11 @@ export class Collection<T extends object = Record<string, unknown>> {
   public optimisticOperations: Derived<Array<ChangeMessage<T>>>
   public derivedState: Derived<Map<string, T>>
   public derivedArray: Derived<Array<T>>
-
+  private changesEffect: Effect
   private syncedData = new Store<Map<string, T>>(new Map())
   public syncedMetadata = new Store(new Map<string, unknown>())
   private pendingSyncedTransactions: Array<PendingSyncedTransaction<T>> = []
+  private syncedKeys = new Store<Set<string>>(new Set())
   public config: CollectionConfig<T>
   private hasReceivedFirstCommit = false
 
@@ -178,6 +181,11 @@ export class Collection<T extends object = Record<string, unknown>> {
   }
 
   public id = crypto.randomUUID()
+
+  private changesSubscribers = new Map<
+    string,
+    (payload: ChangesPayload<T>) => void
+  >()
 
   /**
    * Creates a new Collection instance
@@ -279,6 +287,56 @@ export class Collection<T extends object = Record<string, unknown>> {
     })
     this.derivedArray.mount()
 
+    this.changesEffect = new Effect({
+      fn: () => {
+        const combined = this.derivedState.state
+        const prevCombined = this.derivedState.prevState
+        const changedKeys = new Set(this.syncedKeys.state)
+        this.optimisticOperations.state
+          .flat()
+          .forEach((op) => changedKeys.add(op.key))
+
+        if (changedKeys.size === 0) {
+          return
+        }
+
+        const changes: Array<ChangeMessage<T>> = []
+        for (const key of changedKeys) {
+          if (prevCombined?.has(key) && !combined.has(key)) {
+            changes.push({ type: `delete`, key, value: prevCombined.get(key)! })
+          } else if (!prevCombined?.has(key) && combined.has(key)) {
+            changes.push({ type: `insert`, key, value: combined.get(key)! })
+          } else if (prevCombined?.has(key) && combined.has(key)) {
+            // Check if the value has changed and only emit a change if it has
+            // TODO: Better way to do this? deep equality?
+            const prevValue = JSON.stringify(prevCombined.get(key))
+            const newValue = JSON.stringify(combined.get(key))
+            if (prevValue !== newValue) {
+              changes.push({
+                type: `update`,
+                key,
+                value: combined.get(key)!,
+                previousValue: prevCombined.get(key),
+              })
+            }
+          }
+        }
+
+        this.syncedKeys.setState((prevKeys) => {
+          // TODO: Mutating a dependency in an effect seems like a bad idea as we could
+          // end in in strange and unnecessary loops.
+          // The alternative is that `syncedKeys` is not a Store and then not a
+          // dependency of this effect. We then rely on the `derivedState` to trigger
+          // this effect. I think that works?
+          prevKeys.clear()
+          return prevKeys
+        })
+        this.emitChanges(changes)
+      },
+      deps: [this.derivedState, this.optimisticOperations, this.syncedKeys],
+    })
+    this.changesEffect.mount()
+
     this.config = config
 
     this.derivedState.mount()
@@ -364,6 +422,10 @@ export class Collection<T extends object = Record<string, unknown>> {
         for (const transaction of this.pendingSyncedTransactions) {
           for (const operation of transaction.operations) {
             keys.add(operation.key)
+            this.syncedKeys.setState((prevKeys) => {
+              prevKeys.add(operation.key)
+              return prevKeys
+            })
             this.syncedMetadata.setState((prevData) => {
               switch (operation.type) {
                 case `insert`:
@@ -854,5 +916,46 @@ export class Collection<T extends object = Record<string, unknown>> {
    */
   get transactions() {
     return this.transactionManager.transactions.state
+  }
+
+  private emitChanges(ops: Array<ChangeMessage<T>>) {
+    if (ops.length === 0) {
+      return
+    }
+    const payload: ChangesPayload<T> = {
+      changes: ops,
+      version: getGlobalVersion(),
+    }
+    this.changesSubscribers.forEach((subscriber) => subscriber(payload))
+  }
+
+  /**
+   * Subscribe to changes in the collection
+   * @param callback - A function that will be called with the changes in the collection
+   * @returns A function that can be called to unsubscribe from the changes
+   */
+  public subscribeChanges(
+    callback: (payload: ChangesPayload<T>) => void
+  ): () => void {
+    const id = crypto.randomUUID()
+    this.changesSubscribers.set(id, callback)
+
+    // Get the current state of the collection and emit it as a list of
+    // `insert` changes
+    const changes: Array<ChangeMessage<T>> = [...this.state.entries()].map(
+      ([key, value]) => ({
+        type: `insert`,
+        key,
+        value,
+      })
+    )
+    callback({
+      changes,
+      version: getGlobalVersion(),
+    })
+
+    return () => {
+      this.changesSubscribers.delete(id)
+    }
   }
 }
