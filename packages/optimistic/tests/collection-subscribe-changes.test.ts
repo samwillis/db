@@ -47,7 +47,7 @@ describe(`Collection.subscribeChanges`, () => {
     })
 
     // Wait for initial sync to complete
-    await waitForChanges()
+    // await waitForChanges()
 
     // Subscribe to changes
     const unsubscribe = collection.subscribeChanges(callback)
@@ -59,12 +59,9 @@ describe(`Collection.subscribeChanges`, () => {
     }>
     expect(changes).toHaveLength(2)
 
-    // Check that both items were emitted as inserts
-    if (changes.length > 0) {
-      const insertedKeys = changes.map((change) => change.key)
-      expect(insertedKeys).toContain(`item1`)
-      expect(insertedKeys).toContain(`item2`)
-    }
+    const insertedKeys = changes.map((change) => change.key)
+    expect(insertedKeys).toContain(`item1`)
+    expect(insertedKeys).toContain(`item2`)
 
     // Ensure all changes are insert type
     expect(changes.every((change) => change.type === `insert`)).toBe(true)
@@ -101,9 +98,6 @@ describe(`Collection.subscribeChanges`, () => {
       },
     })
 
-    // Wait for initial sync to complete
-    await waitForChanges()
-
     // Subscribe to changes
     const unsubscribe = collection.subscribeChanges(callback)
 
@@ -118,9 +112,6 @@ describe(`Collection.subscribeChanges`, () => {
         value: { value: `sync value 1` },
       },
     ])
-
-    // Wait for changes to propagate
-    await waitForChanges()
 
     // Verify that insert was emitted
     expect(callback).toHaveBeenCalledTimes(1)
@@ -151,9 +142,6 @@ describe(`Collection.subscribeChanges`, () => {
       },
     ])
 
-    // Wait for changes to propagate
-    await waitForChanges()
-
     // Verify that update was emitted
     expect(callback).toHaveBeenCalledTimes(1)
     const undateChanges = callback.mock.calls[0]![0] as ChangesPayload<{
@@ -180,9 +168,6 @@ describe(`Collection.subscribeChanges`, () => {
         value: { value: `updated sync value` },
       },
     ])
-
-    // Wait for changes to propagate
-    await waitForChanges()
 
     // Verify that delete was emitted
     expect(callback).toHaveBeenCalledTimes(1)
@@ -348,9 +333,6 @@ describe(`Collection.subscribeChanges`, () => {
       },
     })
 
-    // Wait for initial sync to complete
-    await waitForChanges()
-
     // Subscribe to changes
     const unsubscribe = collection.subscribeChanges(callback)
 
@@ -365,9 +347,6 @@ describe(`Collection.subscribeChanges`, () => {
         value: { value: `synced value` },
       },
     ])
-
-    // Wait for changes to propagate
-    await waitForChanges()
 
     // Verify synced insert was emitted
     expect(callback).toHaveBeenCalledTimes(1)
@@ -465,9 +444,6 @@ describe(`Collection.subscribeChanges`, () => {
         },
       },
     })
-
-    // Wait for initial sync to complete
-    await waitForChanges()
 
     // Subscribe to changes
     const unsubscribe = collection.subscribeChanges(callback)

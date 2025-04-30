@@ -320,12 +320,6 @@ export class Collection<T extends object = Record<string, unknown>> {
         }
 
         this.syncedKeys.clear()
-        // Initially I had this as a Store and that I had to mutate here in the effect.
-        // Mutating a dependency in an effect seems like a bad idea as we could
-        // end in in strange and unnecessary loops.
-        // So I went with the alternative that `syncedKeys` is not a Store and we then
-        // rely on the `derivedState` to trigger this effect.
-        // I think that this works?
 
         return changes
       },
