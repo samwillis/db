@@ -143,7 +143,6 @@ export interface CollectionConfig<T extends object = Record<string, unknown>> {
   schema?: StandardSchema<T>
 }
 
-export interface ChangesPayload<T extends object = Record<string, unknown>> {
-  changes: Array<ChangeMessage<T>>
-  version: number
-}
+export type ChangesPayload<T extends object = Record<string, unknown>> = Array<
+  ChangeMessage<T>
+>

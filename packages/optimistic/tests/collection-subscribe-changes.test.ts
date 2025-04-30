@@ -54,22 +54,20 @@ describe(`Collection.subscribeChanges`, () => {
 
     // Verify that callback was called with initial state
     expect(callback).toHaveBeenCalledTimes(1)
-    const payload = callback.mock.calls[0]![0] as ChangesPayload<{
+    const changes = callback.mock.calls[0]![0] as ChangesPayload<{
       value: string
     }>
-    expect(payload.changes).toHaveLength(2)
+    expect(changes).toHaveLength(2)
 
     // Check that both items were emitted as inserts
-    if (payload.changes.length > 0) {
-      const insertedKeys = payload.changes.map((change) => change.key)
+    if (changes.length > 0) {
+      const insertedKeys = changes.map((change) => change.key)
       expect(insertedKeys).toContain(`item1`)
       expect(insertedKeys).toContain(`item2`)
     }
 
     // Ensure all changes are insert type
-    expect(payload.changes.every((change) => change.type === `insert`)).toBe(
-      true
-    )
+    expect(changes.every((change) => change.type === `insert`)).toBe(true)
 
     // Clean up
     unsubscribe()
@@ -126,13 +124,13 @@ describe(`Collection.subscribeChanges`, () => {
 
     // Verify that insert was emitted
     expect(callback).toHaveBeenCalledTimes(1)
-    const insertPayload = callback.mock.calls[0]![0] as ChangesPayload<{
+    const insertChanges = callback.mock.calls[0]![0] as ChangesPayload<{
       value: string
     }>
-    expect(insertPayload.changes).toHaveLength(1)
+    expect(insertChanges).toHaveLength(1)
 
-    if (insertPayload.changes.length > 0) {
-      const insertChange = insertPayload.changes[0]! as ChangeMessage<{
+    if (insertChanges.length > 0) {
+      const insertChange = insertChanges[0]! as ChangeMessage<{
         value: string
       }>
       expect(insertChange).toBeDefined()
@@ -158,12 +156,12 @@ describe(`Collection.subscribeChanges`, () => {
 
     // Verify that update was emitted
     expect(callback).toHaveBeenCalledTimes(1)
-    const updatePayload = callback.mock.calls[0]![0] as ChangesPayload<{
+    const undateChanges = callback.mock.calls[0]![0] as ChangesPayload<{
       value: string
     }>
-    expect(updatePayload.changes).toHaveLength(1)
+    expect(undateChanges).toHaveLength(1)
 
-    const updateChange = updatePayload.changes[0]! as ChangeMessage<{
+    const updateChange = undateChanges[0]! as ChangeMessage<{
       value: string
     }>
     expect(updateChange).toBeDefined()
@@ -188,12 +186,12 @@ describe(`Collection.subscribeChanges`, () => {
 
     // Verify that delete was emitted
     expect(callback).toHaveBeenCalledTimes(1)
-    const deletePayload = callback.mock.calls[0]![0] as ChangesPayload<{
+    const deleteChanges = callback.mock.calls[0]![0] as ChangesPayload<{
       value: string
     }>
-    expect(deletePayload.changes).toHaveLength(1)
+    expect(deleteChanges).toHaveLength(1)
 
-    const deleteChange = deletePayload.changes[0]! as ChangeMessage<{
+    const deleteChange = deleteChanges[0]! as ChangeMessage<{
       value: string
     }>
     expect(deleteChange).toBeDefined()
@@ -248,13 +246,13 @@ describe(`Collection.subscribeChanges`, () => {
 
     // Verify that insert was emitted immediately (optimistically)
     expect(callback).toHaveBeenCalledTimes(1)
-    const insertPayload = callback.mock.calls[0]![0] as ChangesPayload<{
+    const insertChanges = callback.mock.calls[0]![0] as ChangesPayload<{
       value: string
     }>
-    expect(insertPayload.changes).toHaveLength(1)
+    expect(insertChanges).toHaveLength(1)
 
-    if (insertPayload.changes.length > 0) {
-      const insertChange = insertPayload.changes[0]! as ChangeMessage<{
+    if (insertChanges.length > 0) {
+      const insertChange = insertChanges[0]! as ChangeMessage<{
         value: string
       }>
       expect(insertChange).toBeDefined()
@@ -280,13 +278,13 @@ describe(`Collection.subscribeChanges`, () => {
 
     // Verify that update was emitted
     expect(callback).toHaveBeenCalledTimes(1)
-    const updatePayload = callback.mock.calls[0]![0] as ChangesPayload<{
+    const updateChanges = callback.mock.calls[0]![0] as ChangesPayload<{
       value: string
       updated?: boolean
     }>
-    expect(updatePayload.changes).toHaveLength(1)
+    expect(updateChanges).toHaveLength(1)
 
-    const updateChange = updatePayload.changes[0]! as ChangeMessage<{
+    const updateChange = updateChanges[0]! as ChangeMessage<{
       value: string
       updated?: boolean
     }>
@@ -306,12 +304,12 @@ describe(`Collection.subscribeChanges`, () => {
 
     // Verify that delete was emitted
     expect(callback).toHaveBeenCalledTimes(1)
-    const deletePayload = callback.mock.calls[0]![0] as ChangesPayload<{
+    const deleteChanges = callback.mock.calls[0]![0] as ChangesPayload<{
       value: string
     }>
-    expect(deletePayload.changes).toHaveLength(1)
+    expect(deleteChanges).toHaveLength(1)
 
-    const deleteChange = deletePayload.changes[0]! as ChangeMessage<{
+    const deleteChange = deleteChanges[0]! as ChangeMessage<{
       value: string
     }>
     expect(deleteChange).toBeDefined()
@@ -409,11 +407,11 @@ describe(`Collection.subscribeChanges`, () => {
 
     // Verify the synced update was emitted
     expect(callback).toHaveBeenCalledTimes(1)
-    const updatePayload = callback.mock.calls[0]![0] as ChangesPayload<{
+    const updateChanges = callback.mock.calls[0]![0] as ChangesPayload<{
       value: string
     }>
 
-    const updateChange = updatePayload.changes[0]! as ChangeMessage<{
+    const updateChange = updateChanges[0]! as ChangeMessage<{
       value: string
     }>
     expect(updateChange).toBeDefined()
@@ -476,10 +474,10 @@ describe(`Collection.subscribeChanges`, () => {
 
     // First call should have initial state (2 items)
     expect(callback).toHaveBeenCalledTimes(1)
-    const initialPayload = callback.mock.calls[0]![0] as ChangesPayload<{
+    const initialChanges = callback.mock.calls[0]![0] as ChangesPayload<{
       value: string
     }>
-    expect(initialPayload.changes).toHaveLength(2)
+    expect(initialChanges).toHaveLength(2)
 
     // Reset mock
     callback.mockReset()
@@ -493,13 +491,11 @@ describe(`Collection.subscribeChanges`, () => {
 
     // Verify only the 3 new items were emitted, not the existing ones
     expect(callback).toHaveBeenCalledTimes(1)
-    const batchPayload = callback.mock.calls[0]![0] as ChangesPayload<{
+    const batchChanges = callback.mock.calls[0]![0] as ChangesPayload<{
       value: string
     }>
-    expect(batchPayload.changes).toHaveLength(3)
-    expect(
-      batchPayload.changes.every((change) => change.type === `insert`)
-    ).toBe(true)
+    expect(batchChanges).toHaveLength(3)
+    expect(batchChanges.every((change) => change.type === `insert`)).toBe(true)
 
     // Reset mock
     callback.mockReset()
@@ -515,12 +511,12 @@ describe(`Collection.subscribeChanges`, () => {
 
     // Verify only the updated item was emitted
     expect(callback).toHaveBeenCalledTimes(1)
-    const updatePayload = callback.mock.calls[0]![0] as ChangesPayload<{
+    const updateChanges = callback.mock.calls[0]![0] as ChangesPayload<{
       value: string
     }>
-    expect(updatePayload.changes).toHaveLength(1)
+    expect(updateChanges).toHaveLength(1)
 
-    const updateChange = updatePayload.changes[0]! as ChangeMessage<{
+    const updateChange = updateChanges[0]! as ChangeMessage<{
       value: string
     }>
     expect(updateChange).toBeDefined()

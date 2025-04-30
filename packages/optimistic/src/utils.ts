@@ -10,5 +10,6 @@ export function getGlobalVersion(): number {
 }
 
 export function advanceGlobalVersion(): number {
+  console.log(`==== advancing global version`, globalVersion + 1)
   return globalVersion++
 }

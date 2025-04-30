@@ -1,11 +1,9 @@
-import { Derived, Effect, Store, batch } from "@tanstack/store"
+import { Derived, Store, batch } from "@tanstack/store"
 import { withArrayChangeTracking, withChangeTracking } from "./proxy"
 import { getTransactionManager } from "./TransactionManager"
 import { TransactionStore } from "./TransactionStore"
-import { getGlobalVersion } from "./utils"
 import type {
   ChangeMessage,
-  ChangesPayload,
   CollectionConfig,
   InsertConfig,
   OperationConfig,
@@ -157,7 +155,7 @@ export class Collection<T extends object = Record<string, unknown>> {
   public optimisticOperations: Derived<Array<ChangeMessage<T>>>
   public derivedState: Derived<Map<string, T>>
   public derivedArray: Derived<Array<T>>
-  private changesEffect: Effect
+  public derivedChanges: Derived<Array<ChangeMessage<T>>>
   private syncedData = new Store<Map<string, T>>(new Map())
   public syncedMetadata = new Store(new Map<string, unknown>())
   private pendingSyncedTransactions: Array<PendingSyncedTransaction<T>> = []
@@ -181,11 +179,6 @@ export class Collection<T extends object = Record<string, unknown>> {
   }
 
   public id = crypto.randomUUID()
-
-  private changesSubscribers = new Map<
-    string,
-    (payload: ChangesPayload<T>) => void
-  >()
 
   /**
    * Creates a new Collection instance
@@ -287,36 +280,40 @@ export class Collection<T extends object = Record<string, unknown>> {
     })
     this.derivedArray.mount()
 
-    this.changesEffect = new Effect({
-      fn: () => {
-        const combined = this.derivedState.state
-        const prevCombined = this.derivedState.prevState || new Map<string, T>()
+    this.derivedChanges = new Derived({
+      fn: ({
+        currDepVals: [derivedState, optimisticOperations],
+        prevDepVals,
+      }) => {
+        const prevDerivedState = prevDepVals?.[0] ?? new Map<string, T>()
         const changedKeys = new Set(this.syncedKeys)
-        this.optimisticOperations.state
-          .flat()
-          .forEach((op) => changedKeys.add(op.key))
+        optimisticOperations.flat().forEach((op) => changedKeys.add(op.key))
 
         if (changedKeys.size === 0) {
-          return
+          return []
         }
 
         const changes: Array<ChangeMessage<T>> = []
         for (const key of changedKeys) {
-          if (prevCombined.has(key) && !combined.has(key)) {
-            changes.push({ type: `delete`, key, value: prevCombined.get(key)! })
-          } else if (!prevCombined.has(key) && combined.has(key)) {
-            changes.push({ type: `insert`, key, value: combined.get(key)! })
-          } else if (prevCombined.has(key) && combined.has(key)) {
+          if (prevDerivedState.has(key) && !derivedState.has(key)) {
+            changes.push({
+              type: `delete`,
+              key,
+              value: prevDerivedState.get(key)!,
+            })
+          } else if (!prevDerivedState.has(key) && derivedState.has(key)) {
+            changes.push({ type: `insert`, key, value: derivedState.get(key)! })
+          } else if (prevDerivedState.has(key) && derivedState.has(key)) {
             // Check if the value has changed and only emit a change if it has
             // TODO: Better way to do this? deep equality?
-            const prevValue = JSON.stringify(prevCombined.get(key))
-            const newValue = JSON.stringify(combined.get(key))
+            const prevValue = JSON.stringify(prevDerivedState.get(key))
+            const newValue = JSON.stringify(derivedState.get(key))
             if (prevValue !== newValue) {
               changes.push({
                 type: `update`,
                 key,
-                value: combined.get(key)!,
-                previousValue: prevCombined.get(key),
+                value: derivedState.get(key)!,
+                previousValue: prevDerivedState.get(key),
               })
             }
           }
@@ -330,11 +327,11 @@ export class Collection<T extends object = Record<string, unknown>> {
         // rely on the `derivedState` to trigger this effect.
         // I think that this works?
 
-        this.emitChanges(changes)
+        return changes
       },
       deps: [this.derivedState, this.optimisticOperations],
     })
-    this.changesEffect.mount()
+    this.derivedChanges.mount()
 
     this.config = config
 
@@ -914,15 +911,16 @@ export class Collection<T extends object = Record<string, unknown>> {
     return this.transactionManager.transactions.state
   }
 
-  private emitChanges(ops: Array<ChangeMessage<T>>) {
-    if (ops.length === 0) {
-      return
-    }
-    const payload: ChangesPayload<T> = {
-      changes: ops,
-      version: getGlobalVersion(),
-    }
-    this.changesSubscribers.forEach((subscriber) => subscriber(payload))
+  /**
+   * Returns the current state of the collection as an array of changes
+   * @returns An array of changes
+   */
+  public currentStateAsChanges(): Array<ChangeMessage<T>> {
+    return [...this.state.entries()].map(([key, value]) => ({
+      type: `insert`,
+      key,
+      value,
+    }))
   }
 
   /**
@@ -931,27 +929,16 @@ export class Collection<T extends object = Record<string, unknown>> {
    * @returns A function that can be called to unsubscribe from the changes
    */
   public subscribeChanges(
-    callback: (payload: ChangesPayload<T>) => void
+    callback: (changes: Array<ChangeMessage<T>>) => void
   ): () => void {
-    const id = crypto.randomUUID()
-    this.changesSubscribers.set(id, callback)
+    // First send the current state as changes
+    callback(this.currentStateAsChanges())
 
-    // Get the current state of the collection and emit it as a list of
-    // `insert` changes
-    const changes: Array<ChangeMessage<T>> = [...this.state.entries()].map(
-      ([key, value]) => ({
-        type: `insert`,
-        key,
-        value,
-      })
-    )
-    callback({
-      changes,
-      version: getGlobalVersion(),
+    // Then subscribe to changes, this returns an unsubscribe function
+    return this.derivedChanges.subscribe((changes) => {
+      if (changes.currentVal.length > 0) {
+        callback(changes.currentVal)
+      }
     })
-
-    return () => {
-      this.changesSubscribers.delete(id)
-    }
   }
 }
