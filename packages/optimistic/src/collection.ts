@@ -304,8 +304,8 @@ export class Collection<T extends object = Record<string, unknown>> {
           } else if (!prevDerivedState.has(key) && derivedState.has(key)) {
             changes.push({ type: `insert`, key, value: derivedState.get(key)! })
           } else if (prevDerivedState.has(key) && derivedState.has(key)) {
-            // Check if the value has changed and only emit a change if it has
-            // TODO: Better way to do this? deep equality?
+            // TODO: Remove this check below, there is a bug in the transaction manager
+            // that results in multiple emissions during an insert, this is a hacky fix.
             const prevValue = JSON.stringify(prevDerivedState.get(key))
             const newValue = JSON.stringify(derivedState.get(key))
             if (prevValue !== newValue) {
