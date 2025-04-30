@@ -161,7 +161,7 @@ export class Collection<T extends object = Record<string, unknown>> {
   private syncedData = new Store<Map<string, T>>(new Map())
   public syncedMetadata = new Store(new Map<string, unknown>())
   private pendingSyncedTransactions: Array<PendingSyncedTransaction<T>> = []
-  private syncedKeys = new Store<Set<string>>(new Set())
+  private syncedKeys = new Set<string>()
   public config: CollectionConfig<T>
   private hasReceivedFirstCommit = false
 
@@ -290,8 +290,8 @@ export class Collection<T extends object = Record<string, unknown>> {
     this.changesEffect = new Effect({
       fn: () => {
         const combined = this.derivedState.state
-        const prevCombined = this.derivedState.prevState
-        const changedKeys = new Set(this.syncedKeys.state)
+        const prevCombined = this.derivedState.prevState || new Map<string, T>()
+        const changedKeys = new Set(this.syncedKeys)
         this.optimisticOperations.state
           .flat()
           .forEach((op) => changedKeys.add(op.key))
@@ -302,11 +302,11 @@ export class Collection<T extends object = Record<string, unknown>> {
 
         const changes: Array<ChangeMessage<T>> = []
         for (const key of changedKeys) {
-          if (prevCombined?.has(key) && !combined.has(key)) {
+          if (prevCombined.has(key) && !combined.has(key)) {
             changes.push({ type: `delete`, key, value: prevCombined.get(key)! })
-          } else if (!prevCombined?.has(key) && combined.has(key)) {
+          } else if (!prevCombined.has(key) && combined.has(key)) {
             changes.push({ type: `insert`, key, value: combined.get(key)! })
-          } else if (prevCombined?.has(key) && combined.has(key)) {
+          } else if (prevCombined.has(key) && combined.has(key)) {
             // Check if the value has changed and only emit a change if it has
             // TODO: Better way to do this? deep equality?
             const prevValue = JSON.stringify(prevCombined.get(key))
@@ -322,18 +322,17 @@ export class Collection<T extends object = Record<string, unknown>> {
           }
         }
 
-        this.syncedKeys.setState((prevKeys) => {
-          // TODO: Mutating a dependency in an effect seems like a bad idea as we could
-          // end in in strange and unnecessary loops.
-          // The alternative is that `syncedKeys` is not a Store and then not a
-          // dependency of this effect. We then rely on the `derivedState` to trigger
-          // this effect. I think that works?
-          prevKeys.clear()
-          return prevKeys
-        })
+        this.syncedKeys.clear()
+        // Initially I had this as a Store and that I had to mutate here in the effect.
+        // Mutating a dependency in an effect seems like a bad idea as we could
+        // end in in strange and unnecessary loops.
+        // So I went with the alternative that `syncedKeys` is not a Store and we then
+        // rely on the `derivedState` to trigger this effect.
+        // I think that this works?
+
         this.emitChanges(changes)
       },
-      deps: [this.derivedState, this.optimisticOperations, this.syncedKeys],
+      deps: [this.derivedState, this.optimisticOperations],
     })
     this.changesEffect.mount()
 
@@ -422,10 +421,7 @@ export class Collection<T extends object = Record<string, unknown>> {
         for (const transaction of this.pendingSyncedTransactions) {
           for (const operation of transaction.operations) {
             keys.add(operation.key)
-            this.syncedKeys.setState((prevKeys) => {
-              prevKeys.add(operation.key)
-              return prevKeys
-            })
+            this.syncedKeys.add(operation.key)
             this.syncedMetadata.setState((prevData) => {
               switch (operation.type) {
                 case `insert`:
