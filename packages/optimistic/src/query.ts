@@ -384,11 +384,46 @@ export class BaseQueryBuilder<C extends Context<Schema>> {
   }
 
   /**
+   * Add a join clause to the query using a CollectionRef.
+   */
+  join<CRef extends CollectionRef>(joinClause: {
+    type: "inner" | "left" | "right" | "full" | "cross"
+    from: CRef
+    on: Condition<
+      Flatten<{
+        baseSchema: C["baseSchema"]
+        schema: C["schema"] & {
+          [K in keyof CRef & string]: RemoveIndexSignature<
+            (CRef[keyof CRef] extends Collection<infer T> ? T : never) & Input
+          >
+        }
+      }>
+    >
+    where?: Condition<
+      Flatten<{
+        baseSchema: C["baseSchema"]
+        schema: {
+          [K in keyof CRef & string]: RemoveIndexSignature<
+            (CRef[keyof CRef] extends Collection<infer T> ? T : never) & Input
+          >
+        }
+      }>
+    >
+  }): QueryBuilder<
+    Flatten<
+      Omit<C, "schema"> & {
+        schema: C["schema"] & {
+          [K in keyof CRef & string]: RemoveIndexSignature<
+            (CRef[keyof CRef] extends Collection<infer T> ? T : never) & Input
+          >
+        }
+      }
+    >
+  >
+
+  /**
    * Add a join clause to the query without specifying an alias.
    * The collection name will be used as the default alias.
-   *
-   * @param joinClause The join configuration object
-   * @returns A new QueryBuilder with the join clause added
    */
   join<
     T extends InputReference<{
@@ -424,9 +459,6 @@ export class BaseQueryBuilder<C extends Context<Schema>> {
 
   /**
    * Add a join clause to the query with a specified alias.
-   *
-   * @param joinClause The join configuration object with alias
-   * @returns A new QueryBuilder with the join clause added
    */
   join<
     T extends InputReference<{
@@ -462,13 +494,133 @@ export class BaseQueryBuilder<C extends Context<Schema>> {
     >
   >
 
-  /**
-   * Add a join clause to the query.
-   *
-   * @param joinClause The join configuration object
-   * @returns A new QueryBuilder with the join clause added
-   */
   join<
+    T extends
+      | InputReference<{
+          baseSchema: C["baseSchema"]
+          schema: C["baseSchema"]
+        }>
+      | CollectionRef,
+    A extends string | undefined = undefined,
+  >(joinClause: {
+    type: "inner" | "left" | "right" | "full" | "cross"
+    from: T
+    as?: A
+    on: Condition<
+      Flatten<{
+        baseSchema: C["baseSchema"]
+        schema: C["schema"] &
+          (T extends CollectionRef
+            ? {
+                [K in keyof T & string]: RemoveIndexSignature<
+                  (T[keyof T] extends Collection<infer T> ? T : never) & Input
+                >
+              }
+            : T extends InputReference<infer T>
+              ? {
+                  [K in keyof T & string]: RemoveIndexSignature<T[keyof T]>
+                }
+              : never)
+      }>
+    >
+    where?: Condition<
+      Flatten<{
+        baseSchema: C["baseSchema"]
+        schema: C["schema"] &
+          (T extends CollectionRef
+            ? {
+                [K in keyof T & string]: RemoveIndexSignature<
+                  (T[keyof T] extends Collection<infer T> ? T : never) & Input
+                >
+              }
+            : T extends InputReference<infer T>
+              ? {
+                  [K in keyof T & string]: RemoveIndexSignature<T[keyof T]>
+                }
+              : never)
+      }>
+    >
+  }): QueryBuilder<any> {
+    if (typeof joinClause.from === "object" && joinClause.from !== null) {
+      return this.joinCollectionRef(
+        joinClause as {
+          type: "inner" | "left" | "right" | "full" | "cross"
+          from: CollectionRef
+          on: Condition<any>
+          where?: Condition<any>
+        }
+      )
+    } else {
+      return this.joinInputReference(
+        joinClause as {
+          type: "inner" | "left" | "right" | "full" | "cross"
+          from: InputReference<{
+            baseSchema: C["baseSchema"]
+            schema: C["baseSchema"]
+          }>
+          as?: A
+          on: Condition<any>
+          where?: Condition<any>
+        }
+      )
+    }
+  }
+
+  private joinCollectionRef<CRef extends CollectionRef>(joinClause: {
+    type: "inner" | "left" | "right" | "full" | "cross"
+    from: CRef
+    on: Condition<any>
+    where?: Condition<any>
+  }): QueryBuilder<any> {
+    // Create a new builder with a copy of the current query
+    const newBuilder = new BaseQueryBuilder<C>()
+    Object.assign(newBuilder.query, this.query)
+
+    // Get the collection key
+    const keys = Object.keys(joinClause.from)
+    if (keys.length !== 1) {
+      throw new Error("Expected exactly one key in CollectionRef")
+    }
+    const key = keys[0]!
+    const collection = joinClause.from[key]
+    if (!collection) {
+      throw new Error(`Collection not found for key: ${key}`)
+    }
+
+    // Create a copy of the join clause for the query
+    const joinClauseCopy = {
+      type: joinClause.type,
+      from: key,
+      on: joinClause.on,
+      where: joinClause.where,
+    } as JoinClause<C>
+
+    // Add the join clause to the query
+    if (!newBuilder.query.join) {
+      newBuilder.query.join = [joinClauseCopy]
+    } else {
+      newBuilder.query.join = [...newBuilder.query.join, joinClauseCopy]
+    }
+
+    // Add the collection to the collections map
+    newBuilder.query.collections ??= {}
+    newBuilder.query.collections[key] = collection
+
+    // Return the new builder with updated schema type
+    return newBuilder as QueryBuilder<
+      Flatten<
+        Omit<C, "schema"> & {
+          schema: C["schema"] & {
+            [K in keyof CRef & string]: RemoveIndexSignature<
+              (CRef[keyof CRef] extends Collection<infer T> ? T : never) & Input
+            >
+          }
+        }
+      >
+    >
+  }
+
+  private joinInputReference<
     T extends InputReference<{
       baseSchema: C["baseSchema"]
       schema: C["baseSchema"]
@@ -478,26 +630,8 @@ export class BaseQueryBuilder<C extends Context<Schema>> {
     type: "inner" | "left" | "right" | "full" | "cross"
     from: T
     as?: A
-    on: Condition<
-      Flatten<{
-        baseSchema: C["baseSchema"]
-        schema: C["schema"] & {
-          [K in A extends undefined ? T : A]: RemoveIndexSignature<
-            C["baseSchema"][T]
-          >
-        }
-      }>
-    >
-    where?: Condition<
-      Flatten<{
-        baseSchema: C["baseSchema"]
-        schema: {
-          [K in A extends undefined ? T : A]: RemoveIndexSignature<
-            C["baseSchema"][T]
-          >
-        }
-      }>
-    >
+    on: Condition<any>
+    where?: Condition<any>
   }): QueryBuilder<any> {
     // Create a new builder with a copy of the current query
     const newBuilder = new BaseQueryBuilder<C>()
@@ -517,7 +651,6 @@ export class BaseQueryBuilder<C extends Context<Schema>> {
     const _effectiveAlias = joinClause.as ?? joinClause.from
 
     // Return the new builder with updated schema type
-    // Use type assertion to simplify complex type
     return newBuilder as QueryBuilder<
       Flatten<
         Omit<C, "schema"> & {
@@ -706,78 +839,3 @@ export type ResultFromQueryBuilder<QB> = Flatten<
       : never
     : never
 >
-
-const issues = new Collection<{
-  id: string
-  title: string
-  description: string
-  status: 'pending' | 'in-progress' | 'complete' | 'closed'
-  createdAt: string
-  updatedAt: string
-}>()
-
-const users = new Collection<{
-  id: string
-  name: string
-  email: string
-}>()
-
-queryBuilder()
-  .from({ issues })
-  .where([
-  ])
-
-
-
-
-
-
-
-
-
-
-// type CollectionRef<
-//   CC extends Collection<CT>,
-//   K extends string,
-//   CT extends Object,
-// > = {
-//   [P in K]: CC
-// }
-
-// /**
-//  * Test function that accepts a single-key object with a Collection value
-//  * The function infers both the collection's type parameter and the key used.
-//  */
-// function testFunction<CRef extends { [K: string]: Collection<any> }>(
-//   collectionRef: CRef
-// ): {
-//   key: keyof CRef & string
-//   collection: CRef[keyof CRef]
-//   type: CRef[keyof CRef] extends Collection<infer T> ? T : never
-// } {
-//   // Runtime check for single key
-//   const keys = Object.keys(collectionRef)
-//   if (keys.length !== 1) {
-//     throw new Error("Expected exactly one key")
-//   }
-
-//   type Key = keyof CRef & string
-//   type CollectionType = CRef[Key] extends Collection<infer T> ? T : never
-
-//   const key = keys[0] as Key
-//   return {
-//     key,
-//     collection: collectionRef[key],
-//     type: {} as CollectionType,
-//   }
-// }
-
-// // Verify the type inference works
-// const result = testFunction({
-//   test: aCollection,
-//   test2: aCollection,
-// })
-
-// // Type checking
-// type TheKey = typeof result.key // Should be "test"
-// type TheType = typeof result.type // Should be { id: string, name: string }
