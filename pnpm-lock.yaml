@@ -199,6 +199,9 @@ importers:
 
   packages/optimistic:
     dependencies:
+      '@electric-sql/d2ts':
+        specifier: ^0.1.3
+        version: link:../../../d2ts/packages/d2ts
       '@standard-schema/spec':
         specifier: ^1.0.0
         version: 1.0.0
