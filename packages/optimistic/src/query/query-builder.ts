@@ -1,4 +1,4 @@
-import type {
+import {
   Query as BaseQuery,
   Condition,
   From,
@@ -10,7 +10,7 @@ import type {
   Limit,
   Offset,
   WithQuery,
-} from "@electric-sql/d2ts/d2ql"
+} from "./schema.js"
 import type {
   Schema,
   Context,
@@ -21,8 +21,8 @@ import type {
   Flatten,
   InferResultTypeFromSelectTuple,
   Input,
-} from "@electric-sql/d2ts/d2ql"
-import { Collection } from "./collection"
+} from "./types.js"
+import { Collection } from "../collection"
 
 type CollectionRef = { [K: string]: Collection<any> }
 
