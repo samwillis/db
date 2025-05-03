@@ -1,14 +1,8 @@
 import { Store } from "@tanstack/store"
 import { SortedMap } from "./SortedMap"
 import { createDeferred } from "./deferred"
-import type { TransactionStore } from "./TransactionStore"
 import type { Collection } from "./collection"
-import type {
-  MutationStrategy,
-  PendingMutation,
-  Transaction,
-  TransactionState,
-} from "./types"
+import type { PendingMutation, Transaction, TransactionState } from "./types"
 
 // Singleton instance of TransactionManager with type map
 
@@ -18,41 +12,37 @@ const transactionManagerInstances = new Map<string, TransactionManager<any>>()
  * Get the global TransactionManager instance for a specific type
  * Creates a new instance if one doesn't exist for that type
  *
- * @param store - The transaction store for persistence
  * @param collection - The collection this manager is associated with
  * @returns The TransactionManager instance
  */
 export function getTransactionManager<
   T extends object = Record<string, unknown>,
->(store?: TransactionStore, collection?: Collection<T>): TransactionManager<T> {
-  if (!store || !collection) {
+>(collection?: Collection<T>): TransactionManager<T> {
+  if (!collection) {
     throw new Error(
-      `TransactionManager not initialized. You must provide store and collection parameters on first call.`
+      `TransactionManager not initialized. You must provide its collection on the first call.`
     )
   }
 
   if (!transactionManagerInstances.has(collection.id)) {
     transactionManagerInstances.set(
       collection.id,
-      new TransactionManager(store, collection)
+      new TransactionManager(collection)
     )
   }
   return transactionManagerInstances.get(collection.id) as TransactionManager<T>
 }
 
 export class TransactionManager<T extends object = Record<string, unknown>> {
-  private store: TransactionStore
   private collection: Collection<T>
   public transactions: Store<SortedMap<string, Transaction>>
 
   /**
    * Creates a new TransactionManager instance
    *
-   * @param store - The transaction store for persistence
    * @param collection - The collection this manager is associated with
    */
-  constructor(store: TransactionStore, collection: Collection<T>) {
-    this.store = store
+  constructor(collection: Collection<T>) {
     this.collection = collection
     // Initialize store with SortedMap that sorts by createdAt
     this.transactions = new Store(
@@ -60,16 +50,6 @@ export class TransactionManager<T extends object = Record<string, unknown>> {
         (a, b) => a.createdAt.getTime() - b.createdAt.getTime()
       )
     )
-
-    // Load transactions from store on init
-    this.store.getTransactions().then((transactions) => {
-      transactions.forEach((tx) => {
-        this.transactions.setState((sortedMap) => {
-          sortedMap.set(tx.id, tx as Transaction)
-          return sortedMap
-        })
-      })
-    })
   }
 
   /**
@@ -141,23 +121,20 @@ export class TransactionManager<T extends object = Record<string, unknown>> {
   }
 
   /**
-   * Applies a transaction with the given mutations using the specified strategy
+   * Applies mutations to the current transaction. A given transaction accumulates mutations
+   * within a single event loop.
    *
    * @param mutations - Array of pending mutations to apply
-   * @param strategy - Strategy to use when applying the transaction
    * @returns A live reference to the created or updated transaction
    */
-  applyTransaction(
-    mutations: Array<PendingMutation>,
-    strategy: MutationStrategy
-  ): Transaction {
-    // See if there's an existing overlapping queued mutation.
+  applyTransaction(mutations: Array<PendingMutation>): Transaction {
+    // See if there's an existing transaction with overlapping queued mutation.
     const mutationKeys = mutations.map((m) => m.key)
     let transaction: Transaction | undefined = Array.from(
       this.transactions.state.values()
     ).filter(
       (t) =>
-        t.state === `queued` &&
+        t.state === `pending` &&
         t.mutations.some((m) => mutationKeys.includes(m.key))
     )[0]
 
@@ -186,43 +163,23 @@ export class TransactionManager<T extends object = Record<string, unknown>> {
         updatedAt: new Date(),
         mutations,
         metadata: {},
-        strategy,
-        isSynced: createDeferred(),
         isPersisted: createDeferred(),
       } as Transaction
     }
 
-    // For ordered transactions, check if we need to queue behind another transaction
-    if (strategy.type === `ordered`) {
-      const activeTransactions = this.getActiveTransactions()
-      const orderedTransactions = activeTransactions.filter(
-        (tx) => tx.strategy.type === `ordered` && tx.state !== `queued`
-      )
-
-      // Find any active transaction that has overlapping mutations
-      const conflictingTransaction = orderedTransactions.find((tx) =>
-        this.hasOverlappingMutations(tx.mutations, mutations)
-      )
-
-      if (conflictingTransaction) {
-        transaction.state = `queued`
-        transaction.queuedBehind = conflictingTransaction.id
-      } else {
-        this.setTransaction(transaction)
-        this.processTransaction(transaction.id)
-      }
-    }
-
     this.setTransaction(transaction)
-    // Persist async
-    this.store.putTransaction(transaction)
+
+    // Start processing in the next event loop tick.
+    setTimeout(() => {
+      this.processTransaction(transaction.id)
+    }, 0)
 
     // Return a live reference to the transaction
     return this.createLiveTransactionReference(transaction.id)
   }
 
   /**
-   * Process a transaction through persist and awaitSync
+   * Process a transaction through the mutation function
    *
    * @param transactionId - The ID of the transaction to process
    * @private
@@ -231,73 +188,32 @@ export class TransactionManager<T extends object = Record<string, unknown>> {
     const transaction = this.getTransaction(transactionId)
     if (!transaction) return
 
-    // If no mutationFn is provided, throw an error
+    // Throw an error if no mutation function is provided
     if (!this.collection.config.mutationFn) {
       throw new Error(
-        `Cannot process transaction without a mutationFn in the collection config`
+        `No mutation function provided for transaction ${transactionId}`
       )
     }
 
+    // Set transaction state to persisting
     this.setTransactionState(transactionId, `persisting`)
 
-    this.collection.config.mutationFn
-      .persist({
-        transaction: this.createLiveTransactionReference(transactionId),
+    // Create a live reference to the transaction that always returns the latest state
+    const transactionRef = this.createLiveTransactionReference(transactionId)
+
+    // Call the mutation function
+    this.collection.config
+      .mutationFn({
+        transaction: transactionRef,
         collection: this.collection,
       })
-      .then((persistResult) => {
+      .then(() => {
         const tx = this.getTransaction(transactionId)
         if (!tx) return
 
+        // Mark as persisted
         tx.isPersisted?.resolve(true)
-        if (this.collection.config.mutationFn?.awaitSync) {
-          this.setTransactionState(transactionId, `persisted_awaiting_sync`)
-
-          // Create a promise that rejects after 2 seconds
-          const timeoutPromise = new Promise<never>((_, reject) => {
-            setTimeout(() => {
-              reject(new Error(`Sync operation timed out after 2 seconds`))
-            }, this.collection.config.mutationFn?.awaitSyncTimeoutMs ?? 2000)
-          })
-
-          // Race the awaitSync promise against the timeout
-          Promise.race([
-            this.collection.config.mutationFn.awaitSync({
-              transaction: this.createLiveTransactionReference(transactionId),
-              collection: this.collection,
-              persistResult,
-            }),
-            timeoutPromise,
-          ])
-            .then(() => {
-              const updatedTx = this.getTransaction(transactionId)
-              if (!updatedTx) return
-
-              updatedTx.isSynced?.resolve(true)
-              this.setTransactionState(transactionId, `completed`)
-            })
-            // Catch awaitSync errors or timeout
-            .catch((error) => {
-              const updatedTx = this.getTransaction(transactionId)
-              if (!updatedTx) return
-
-              // Update transaction with error information
-              updatedTx.error = {
-                message: error.message || `Error during sync`,
-                error:
-                  error instanceof Error ? error : new Error(String(error)),
-              }
-
-              // Reject the isSynced promise
-              updatedTx.isSynced?.reject(error)
-
-              // Set transaction state to failed
-              this.setTransaction(updatedTx)
-              this.setTransactionState(transactionId, `failed`)
-            })
-        } else {
-          this.setTransactionState(transactionId, `completed`)
-        }
+        this.setTransactionState(transactionId, `completed`)
       })
       .catch((error) => {
         const tx = this.getTransaction(transactionId)
@@ -309,9 +225,8 @@ export class TransactionManager<T extends object = Record<string, unknown>> {
           error: error instanceof Error ? error : new Error(String(error)),
         }
 
-        // Reject both promises
+        // Reject the promise
         tx.isPersisted?.reject(tx.error.error)
-        tx.isSynced?.reject(tx.error.error)
 
         // Set transaction state to failed
         this.setTransactionState(transactionId, `failed`)
@@ -339,38 +254,6 @@ export class TransactionManager<T extends object = Record<string, unknown>> {
     }
 
     this.setTransaction(updatedTransaction)
-
-    // Check if the transaction is in a terminal state
-    if (newState === `completed` || newState === `failed`) {
-      // Delete from IndexedDB if in terminal state
-      this.store.deleteTransaction(id)
-    } else {
-      // Persist async only if not in terminal state
-      this.store.putTransaction(updatedTransaction)
-    }
-
-    // If this transaction is completing, check if any are queued behind it
-    if (
-      (newState === `completed` || newState === `failed`) &&
-      transaction.strategy.type === `ordered`
-    ) {
-      // Get all ordered transactions that are queued behind this one
-      const queuedTransactions = Array.from(
-        this.transactions.state.values()
-      ).filter(
-        (tx) =>
-          tx.state === `queued` &&
-          tx.strategy.type === `ordered` &&
-          tx.queuedBehind === transaction.id
-      )
-
-      // Process each queued transaction
-      for (const queuedTransaction of queuedTransactions) {
-        queuedTransaction.queuedBehind = undefined
-        this.setTransaction(queuedTransaction)
-        this.processTransaction(queuedTransaction.id)
-      }
-    }
   }
 
   /**

@@ -1,20 +1,18 @@
 import { Derived, Store, batch } from "@tanstack/store"
 import { withArrayChangeTracking, withChangeTracking } from "./proxy"
 import { getTransactionManager } from "./TransactionManager"
-import { TransactionStore } from "./TransactionStore"
 import type {
   ChangeMessage,
   CollectionConfig,
   InsertConfig,
   OperationConfig,
+  OptimisticChangeMessage,
   PendingMutation,
   StandardSchema,
   Transaction,
-  TransactionState,
 } from "./types"
 
 // Store collections in memory using Tanstack store
-
 export const collectionsStore = new Store(new Map<string, Collection<any>>())
 
 // Map to track loading collections
@@ -26,7 +24,7 @@ const loadingCollections = new Map<
 
 interface PendingSyncedTransaction<T extends object = Record<string, unknown>> {
   committed: boolean
-  operations: Array<ChangeMessage<T>>
+  operations: Array<OptimisticChangeMessage<T>>
 }
 
 /**
@@ -46,7 +44,14 @@ interface PendingSyncedTransaction<T extends object = Record<string, unknown>> {
  *     id: `users-${params.userId}`,
  *     sync: { ... },
  *     // mutationFn is optional - provide it if you need mutation capabilities
- *     mutationFn: { ... }
+ *     mutationFn: async (params: {
+ *       transaction: Transaction
+ *       collection: Collection<Record<string, unknown>>
+ *     }) => {
+ *       // Implement your mutation (and syncing) logic here
+ *       // Return a promise that resolves when the mutation and syncing is complete.
+ *       // When this function returns, the optimistic mutations are dropped.
+ *     }
  *   });
  *
  *   return null;
@@ -150,9 +155,8 @@ export class SchemaValidationError extends Error {
 
 export class Collection<T extends object = Record<string, unknown>> {
   public transactionManager!: ReturnType<typeof getTransactionManager<T>>
-  private transactionStore: TransactionStore
 
-  public optimisticOperations: Derived<Array<ChangeMessage<T>>>
+  public optimisticOperations: Derived<Array<OptimisticChangeMessage<T>>>
   public derivedState: Derived<Map<string, T>>
   public derivedArray: Derived<Array<T>>
   public derivedChanges: Derived<Array<ChangeMessage<T>>>
@@ -191,27 +195,22 @@ export class Collection<T extends object = Record<string, unknown>> {
       throw new Error(`Collection requires a sync config`)
     }
 
-    this.transactionStore = new TransactionStore()
-    this.transactionManager = getTransactionManager<T>(
-      this.transactionStore,
-      this
-    )
+    this.transactionManager = getTransactionManager<T>(this)
 
     // Copies of live mutations are stored here and removed once the transaction completes.
     this.optimisticOperations = new Derived({
       fn: ({ currDepVals: [transactions] }) => {
         const result = Array.from(transactions.values())
-          .filter(
-            (transaction) =>
-              transaction.state !== `completed` &&
-              transaction.state !== `failed`
-          )
-          .map((transaction) =>
-            transaction.mutations.map((mutation) => {
-              const message: ChangeMessage<T> = {
+          .map((transaction) => {
+            const isActive = ![`completed`, `failed`].includes(
+              transaction.state
+            )
+            return transaction.mutations.map((mutation) => {
+              const message: OptimisticChangeMessage<T> = {
                 type: mutation.type,
                 key: mutation.key,
                 value: mutation.modified as T,
+                isActive,
               }
               if (
                 mutation.metadata !== undefined &&
@@ -221,7 +220,7 @@ export class Collection<T extends object = Record<string, unknown>> {
               }
               return message
             })
-          )
+          })
           .flat()
 
         return result
@@ -234,32 +233,27 @@ export class Collection<T extends object = Record<string, unknown>> {
     this.derivedState = new Derived({
       fn: ({ currDepVals: [syncedData, operations] }) => {
         const combined = new Map<string, T>(syncedData)
+        const optimisticKeys = new Set<string>()
+
         // Apply the optimistic operations on top of the synced state.
         for (const operation of operations) {
-          let existingValue
-          switch (operation.type) {
-            case `insert`:
-              combined.set(operation.key, operation.value)
-              break
-            case `update`:
-              existingValue = syncedData.get(operation.key)
-              combined.set(operation.key, {
-                ...(existingValue || {}),
-                ...operation.value,
-              })
-              break
-            case `delete`:
-              combined.delete(operation.key)
-              break
+          optimisticKeys.add(operation.key)
+          if (operation.isActive) {
+            switch (operation.type) {
+              case `insert`:
+                combined.set(operation.key, operation.value)
+                break
+              case `update`:
+                combined.set(operation.key, operation.value)
+                break
+              case `delete`:
+                combined.delete(operation.key)
+                break
+            }
           }
         }
 
         // Update object => key mappings
-        const optimisticKeys = new Set<string>()
-        for (const operation of operations) {
-          optimisticKeys.add(operation.key)
-        }
-
         optimisticKeys.forEach((key) => {
           if (combined.has(key)) {
             this.objectKeyMap.set(combined.get(key)!, key)
@@ -386,87 +380,65 @@ export class Collection<T extends object = Record<string, unknown>> {
    * This method processes operations from pending transactions and applies them to the synced data
    */
   commitPendingTransactions = () => {
-    // Check if there's any transactions that aren't finished.
-    // If not, proceed.
-    // If so, subscribe to transactions and keep checking if can proceed.
-    //
-    // The plan is to have a finer-grained locking but just blocking applying
-    // synced data until a persisting transaction is finished seems fine.
-    // We also don't yet have support for transactions that don't immediately
-    // persist so right now, blocking sync only delays their application for a
-    // few hundred milliseconds. So not the worse thing in th world.
-    // But something to fix in the future.
-    // Create a Set with only the terminal states
-    const terminalStates = new Set<TransactionState>([`completed`, `failed`])
-
-    // Function to check if a state is NOT a terminal state
-    function isNotTerminalState({ state }: Transaction): boolean {
-      return !terminalStates.has(state)
-    }
-    if (
-      this.transactions.size === 0 ||
-      !Array.from(this.transactions.values()).some(isNotTerminalState)
-    ) {
-      const keys = new Set<string>()
-      batch(() => {
-        for (const transaction of this.pendingSyncedTransactions) {
-          for (const operation of transaction.operations) {
-            keys.add(operation.key)
-            this.syncedKeys.add(operation.key)
-            this.syncedMetadata.setState((prevData) => {
-              switch (operation.type) {
-                case `insert`:
-                  prevData.set(operation.key, operation.metadata)
-                  break
-                case `update`:
-                  prevData.set(operation.key, {
-                    ...prevData.get(operation.key)!,
-                    ...operation.metadata,
-                  })
-                  break
-                case `delete`:
-                  prevData.delete(operation.key)
-                  break
-              }
-              return prevData
-            })
-            this.syncedData.setState((prevData) => {
-              switch (operation.type) {
-                case `insert`:
-                  prevData.set(operation.key, operation.value)
-                  break
-                case `update`:
-                  prevData.set(operation.key, {
-                    ...prevData.get(operation.key)!,
-                    ...operation.value,
-                  })
-                  break
-                case `delete`:
-                  prevData.delete(operation.key)
-                  break
-              }
-              return prevData
-            })
-          }
+    const keys = new Set<string>()
+    batch(() => {
+      for (const transaction of this.pendingSyncedTransactions) {
+        for (const operation of transaction.operations) {
+          keys.add(operation.key)
+          this.syncedKeys.add(operation.key)
+          this.syncedMetadata.setState((prevData) => {
+            switch (operation.type) {
+              case `insert`:
+                prevData.set(operation.key, operation.metadata)
+                break
+              case `update`:
+                prevData.set(operation.key, {
+                  ...prevData.get(operation.key)!,
+                  ...operation.metadata,
+                })
+                break
+              case `delete`:
+                prevData.delete(operation.key)
+                break
+            }
+            return prevData
+          })
+          this.syncedData.setState((prevData) => {
+            switch (operation.type) {
+              case `insert`:
+                prevData.set(operation.key, operation.value)
+                break
+              case `update`:
+                prevData.set(operation.key, {
+                  ...prevData.get(operation.key)!,
+                  ...operation.value,
+                })
+                break
+              case `delete`:
+                prevData.delete(operation.key)
+                break
+            }
+            return prevData
+          })
         }
-      })
-
-      keys.forEach((key) => {
-        const curValue = this.state.get(key)
-        if (curValue) {
-          this.objectKeyMap.set(curValue, key)
-        }
-      })
-
-      this.pendingSyncedTransactions = []
-
-      // Call any registered one-time commit listeners
-      if (!this.hasReceivedFirstCommit) {
-        this.hasReceivedFirstCommit = true
-        const callbacks = [...this.onFirstCommitCallbacks]
-        this.onFirstCommitCallbacks = []
-        callbacks.forEach((callback) => callback())
       }
+    })
+
+    keys.forEach((key) => {
+      const curValue = this.state.get(key)
+      if (curValue) {
+        this.objectKeyMap.set(curValue, key)
+      }
+    })
+
+    this.pendingSyncedTransactions = []
+
+    // Call any registered one-time commit listeners
+    if (!this.hasReceivedFirstCommit) {
+      this.hasReceivedFirstCommit = true
+      const callbacks = [...this.onFirstCommitCallbacks]
+      this.onFirstCommitCallbacks = []
+      callbacks.forEach((callback) => callback())
     }
   }
 
@@ -625,9 +597,7 @@ export class Collection<T extends object = Record<string, unknown>> {
       mutations.push(mutation)
     })
 
-    return this.transactionManager.applyTransaction(mutations, {
-      type: `ordered`,
-    })
+    return this.transactionManager.applyTransaction(mutations)
   }
 
   /**
@@ -755,9 +725,7 @@ export class Collection<T extends object = Record<string, unknown>> {
       throw new Error(`No changes were made to any of the objects`)
     }
 
-    return this.transactionManager.applyTransaction(mutations, {
-      type: `ordered`,
-    })
+    return this.transactionManager.applyTransaction(mutations)
   }
 
   /**
@@ -795,7 +763,9 @@ export class Collection<T extends object = Record<string, unknown>> {
       if (typeof item === `object` && (item as unknown) !== null) {
         const objectKey = this.objectKeyMap.get(item)
         if (objectKey === undefined) {
-          throw new Error(`Object not found in collection`)
+          throw new Error(
+            `Object not found in collection: ${JSON.stringify(item)}`
+          )
         }
         key = objectKey
       } else if (typeof item === `string`) {
@@ -833,9 +803,7 @@ export class Collection<T extends object = Record<string, unknown>> {
       }
     })
 
-    return this.transactionManager.applyTransaction(mutations, {
-      type: `ordered`,
-    })
+    return this.transactionManager.applyTransaction(mutations)
   }
 
   /**

@@ -3,7 +3,6 @@ import type { Deferred } from "../src/deferred"
 import type { StandardSchemaV1 } from "@standard-schema/spec"
 
 export type TransactionState =
-  | `queued`
   | `pending`
   | `persisting`
   | `persisted_awaiting_sync`
@@ -29,10 +28,7 @@ export interface Transaction {
   createdAt: Date
   updatedAt: Date
   mutations: Array<PendingMutation>
-  strategy: MutationStrategy
   metadata: Record<string, unknown>
-  queuedBehind?: string
-  isSynced?: Deferred<boolean>
   isPersisted?: Deferred<boolean>
   error?: {
     transactionId?: string // For dependency failures
@@ -85,29 +81,17 @@ export interface ChangeMessage<T extends object = Record<string, unknown>> {
   metadata?: Record<string, unknown>
 }
 
-export interface MutationFn<T extends object = Record<string, unknown>> {
-  persist: (params: {
-    transaction: Transaction
-    collection: Collection<T>
-  }) => Promise<any>
-
-  // Set timeout for awaiting sync (default is 2 seconds)
-  awaitSyncTimeoutMs?: number
-  awaitSync?: (params: {
-    transaction: Transaction
-    collection: Collection<T>
-
-    persistResult: any
-  }) => Promise<void>
+export interface OptimisticChangeMessage<
+  T extends object = Record<string, unknown>,
+> extends ChangeMessage<T> {
+  // Is this change message part of an active transaction. Only applies to optimistic changes.
+  isActive?: boolean
 }
 
-export interface MutationStrategy {
-  type: `ordered` | `parallel`
-  merge?: (
-    syncedData: Record<string, unknown>,
-    pendingMutations: Array<PendingMutation>
-  ) => Record<string, unknown>
-}
+export type MutationFn<T extends object = Record<string, unknown>> = (params: {
+  transaction: Transaction
+  collection: Collection<T>
+}) => Promise<any>
 
 /**
  * The Standard Schema interface.

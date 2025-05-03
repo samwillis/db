@@ -41,9 +41,7 @@ describe(`Collection.subscribeChanges`, () => {
           commit()
         },
       },
-      mutationFn: {
-        persist: async () => {},
-      },
+      mutationFn: async () => {},
     })
 
     // Wait for initial sync to complete
@@ -93,9 +91,7 @@ describe(`Collection.subscribeChanges`, () => {
           commit()
         },
       },
-      mutationFn: {
-        persist: async () => {},
-      },
+      mutationFn: async () => {},
     })
 
     // Subscribe to changes
@@ -211,12 +207,9 @@ describe(`Collection.subscribeChanges`, () => {
           })
         },
       },
-      mutationFn: {
-        persist: async () => {},
-        awaitSync({ transaction }) {
-          emitter.emit(`sync`, transaction.mutations)
-          return Promise.resolve()
-        },
+      mutationFn: async ({ transaction }) => {
+        emitter.emit(`sync`, transaction.mutations)
+        return Promise.resolve()
       },
     })
 
@@ -328,9 +321,7 @@ describe(`Collection.subscribeChanges`, () => {
           commit()
         },
       },
-      mutationFn: {
-        persist: async () => {},
-      },
+      mutationFn: async () => {},
     })
 
     // Subscribe to changes
@@ -436,12 +427,9 @@ describe(`Collection.subscribeChanges`, () => {
           })
         },
       },
-      mutationFn: {
-        persist: async () => {},
-        awaitSync({ transaction }) {
-          emitter.emit(`sync`, transaction.mutations)
-          return Promise.resolve()
-        },
+      mutationFn: async ({ transaction }) => {
+        emitter.emit(`sync`, transaction.mutations)
+        return Promise.resolve()
       },
     })
 
@@ -515,9 +503,7 @@ describe(`Collection.subscribeChanges`, () => {
           commit()
         },
       },
-      mutationFn: {
-        persist: async () => {},
-      },
+      mutationFn: async () => {},
     })
 
     // Subscribe to changes

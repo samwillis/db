@@ -3,7 +3,6 @@ import { act, renderHook } from "@testing-library/react"
 import mitt from "mitt"
 import { useCollection } from "../src/useCollection"
 import type { PendingMutation } from "@tanstack/optimistic"
-import "fake-indexeddb/auto"
 
 describe(`useCollection`, () => {
   it(`should handle insert, update, and delete operations`, async () => {
@@ -29,14 +28,12 @@ describe(`useCollection`, () => {
             })
           },
         },
-        mutationFn: {
-          persist: persistMock,
-          awaitSync: ({ transaction }) => {
-            act(() => {
-              emitter.emit(`update`, transaction.mutations)
-            })
-            return Promise.resolve()
-          },
+        mutationFn: ({ transaction }) => {
+          persistMock()
+          act(() => {
+            emitter.emit(`update`, transaction.mutations)
+          })
+          return Promise.resolve()
         },
       })
     )
@@ -84,7 +81,7 @@ describe(`useCollection`, () => {
     })
 
     await act(async () => {
-      await updateTransaction.isSynced?.promise
+      await updateTransaction.isPersisted?.promise
     })
 
     // Verify update
@@ -144,6 +141,7 @@ describe(`useCollection`, () => {
     expect(result.current.state.size).toBe(0)
     expect(result.current.data.length).toBe(0)
 
+    await new Promise((resolve) => setTimeout(() => resolve(null), 0))
     // Verify persist was called for each operation
     expect(persistMock).toHaveBeenCalledTimes(6) // 2 inserts + 2 updates + 2 deletes
   })
@@ -156,14 +154,12 @@ describe(`useCollection`, () => {
     const { result } = renderHook(() =>
       useCollection({
         id: `test-properties`,
-        mutationFn: {
-          persist: persistMock,
-          awaitSync: ({ transaction }) => {
-            act(() => {
-              emitter.emit(`update`, transaction.mutations)
-            })
-            return Promise.resolve()
-          },
+        mutationFn: ({ transaction }) => {
+          persistMock()
+          act(() => {
+            emitter.emit(`update`, transaction.mutations)
+          })
+          return Promise.resolve()
         },
         sync: {
           sync: ({ begin, write, commit }) => {
@@ -227,14 +223,12 @@ describe(`useCollection`, () => {
     const { result } = renderHook(() =>
       useCollection<{ id: number; name: string }>({
         id: `test-selector`,
-        mutationFn: {
-          persist: persistMock,
-          awaitSync: ({ transaction }) => {
-            act(() => {
-              emitter.emit(`update`, transaction.mutations)
-            })
-            return Promise.resolve()
-          },
+        mutationFn: ({ transaction }) => {
+          persistMock()
+          act(() => {
+            emitter.emit(`update`, transaction.mutations)
+          })
+          return Promise.resolve()
         },
         sync: {
           sync: ({ begin, write, commit }) => {

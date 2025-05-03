@@ -1,9 +1,12 @@
 import { describe, expect, it, vi } from "vitest"
-import "fake-indexeddb/auto"
 import mitt from "mitt"
 import { z } from "zod"
 import { Collection, SchemaValidationError } from "../src/collection"
-import type { ChangeMessage, PendingMutation } from "../src/types"
+import type {
+  ChangeMessage,
+  OptimisticChangeMessage,
+  PendingMutation,
+} from "../src/types"
 
 describe(`Collection`, () => {
   it(`should throw if there's no sync config`, () => {
@@ -104,9 +107,7 @@ describe(`Collection`, () => {
           expect(collection.state).toEqual(expectedData)
         },
       },
-      mutationFn: {
-        persist: async () => {},
-      },
+      mutationFn: async () => {},
     })
   })
 
@@ -136,34 +137,30 @@ describe(`Collection`, () => {
           })
         },
       },
-      mutationFn: {
-        persist({ transaction }) {
-          // Redact time-based and random fields
-          const redactedTransaction = {
-            ...transaction.toObject(),
-            mutations: {
-              ...transaction.mutations.map((mutation) => {
-                return {
-                  ...mutation,
-                  createdAt: `[REDACTED]`,
-                  updatedAt: `[REDACTED]`,
-                  mutationId: `[REDACTED]`,
-                }
-              }),
-            },
-          }
+      mutationFn: ({ transaction }) => {
+        // Redact time-based and random fields
+        const redactedTransaction = {
+          ...transaction.toObject(),
+          mutations: {
+            ...transaction.mutations.map((mutation) => {
+              return {
+                ...mutation,
+                createdAt: `[REDACTED]`,
+                updatedAt: `[REDACTED]`,
+                mutationId: `[REDACTED]`,
+              }
+            }),
+          },
+        }
 
-          // Call the mock function with the redacted transaction
-          persistMock({ transaction: redactedTransaction })
-          return Promise.resolve()
-        },
-        awaitSync({ transaction }) {
-          // Call the mock function with the transaction
-          syncMock({ transaction })
+        // Call the mock function with the redacted transaction
+        persistMock({ transaction: redactedTransaction })
 
-          emitter.emit(`sync`, transaction.mutations)
-          return Promise.resolve()
-        },
+        // Call the mock function with the transaction
+        syncMock({ transaction })
+
+        emitter.emit(`sync`, transaction.mutations)
+        return Promise.resolve()
       },
     })
 
@@ -185,12 +182,15 @@ describe(`Collection`, () => {
     })
 
     // Check the optimistic operation is there
-    const insertOperation: ChangeMessage = {
+    const insertOperation: OptimisticChangeMessage = {
       key: insertedKey,
       value: { value: `bar` },
       type: `insert`,
+      isActive: true,
     }
     expect(collection.optimisticOperations.state[0]).toEqual(insertOperation)
+
+    await transaction.isPersisted?.promise
 
     // Check persist data (moved outside the persist callback)
     // @ts-expect-error possibly undefined is ok in test
@@ -204,9 +204,8 @@ describe(`Collection`, () => {
       value: `bar`,
     })
 
-    await transaction.isSynced?.promise
+    await transaction.isPersisted?.promise
 
-    // Check sync data (moved outside the awaitSync callback)
     // @ts-expect-error possibly undefined is ok in test
     const syncData = syncMock.mock.calls[0][0]
     // Check that the transaction is in the right state during sync waiting
@@ -222,7 +221,9 @@ describe(`Collection`, () => {
       // @ts-expect-error possibly undefined is ok in test
       Array.from(collection.transactions.values())[0].state
     ).toMatchInlineSnapshot(`"completed"`)
-    expect(collection.optimisticOperations.state).toEqual([])
+    expect(
+      collection.optimisticOperations.state.filter((o) => o.isActive)
+    ).toEqual([])
     expect(collection.state).toEqual(new Map([[insertedKey, { value: `bar` }]]))
 
     // Test insert with provided key
@@ -307,7 +308,7 @@ describe(`Collection`, () => {
     expect(collection.state.has(keys[3])).toBe(false)
   })
 
-  it(`synced updates shouldn't be applied while there's an ongoing transaction`, async () => {
+  it(`synced updates should be applied while there's an ongoing transaction`, async () => {
     const emitter = mitt()
 
     // new collection w/ mock sync/mutation
@@ -330,22 +331,25 @@ describe(`Collection`, () => {
           })
         },
       },
-      mutationFn: {
-        persist() {
-          // Sync something and check that that it isn't applied because
-          // we're still in the middle of persisting a transaction.
-          emitter.emit(`update`, [
-            { key: `the-key`, type: `insert`, changes: { bar: `value` } },
+      mutationFn: ({ transaction }) => {
+        // Sync something and check that that it isn't applied because
+        // we're still in the middle of persisting a transaction.
+        emitter.emit(`update`, [
+          { key: `the-key`, type: `insert`, changes: { bar: `value` } },
+          // This update is ignored because the optimistic update overrides it.
+          { key: `foo`, type: `update`, changes: { bar: `value2` } },
+        ])
+        expect(collection.state).toEqual(
+          new Map([
+            [`foo`, { value: `bar` }],
+            [`the-key`, { bar: `value` }],
           ])
-          expect(collection.state).toEqual(new Map([[`foo`, { value: `bar` }]]))
-          // Remove it so we don't have to assert against it below
-          emitter.emit(`update`, [{ key: `the-key`, type: `delete` }])
-          return Promise.resolve()
-        },
-        awaitSync({ transaction }) {
-          emitter.emit(`update`, transaction.mutations)
-          return Promise.resolve()
-        },
+        )
+        // Remove it so we don't have to assert against it below
+        emitter.emit(`update`, [{ key: `the-key`, type: `delete` }])
+
+        emitter.emit(`update`, transaction.mutations)
+        return Promise.resolve()
       },
     })
 
@@ -369,14 +373,15 @@ describe(`Collection`, () => {
     })
 
     // Check the optimistic operation is there
-    const insertOperation: ChangeMessage = {
+    const insertOperation: OptimisticChangeMessage = {
       key: `foo`,
       value: { value: `bar` },
       type: `insert`,
+      isActive: true,
     }
     expect(collection.optimisticOperations.state[0]).toEqual(insertOperation)
 
-    await transaction.isSynced?.promise
+    await transaction.isPersisted?.promise
 
     expect(collection.state).toEqual(new Map([[`foo`, { value: `bar` }]]))
   })
@@ -390,9 +395,7 @@ describe(`Collection`, () => {
           commit()
         },
       },
-      mutationFn: {
-        persist: async () => {},
-      },
+      mutationFn: async () => {},
     })
 
     // Insert multiple items with a sparse key array
@@ -446,9 +449,7 @@ describe(`Collection`, () => {
           commit()
         },
       },
-      mutationFn: {
-        persist: () => Promise.resolve(),
-      },
+      mutationFn: () => Promise.resolve(),
     })
 
     // Add an item to the collection
@@ -493,9 +494,7 @@ describe(`Collection with schema validation`, () => {
           commit()
         },
       },
-      mutationFn: {
-        persist: async () => {},
-      },
+      mutationFn: async () => {},
       schema: userSchema,
     })
 
