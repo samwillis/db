@@ -193,14 +193,15 @@ describe(`Collection.subscribeChanges`, () => {
       sync: {
         sync: ({ begin, write, commit }) => {
           // Listen for sync events
-          emitter.on(`sync`, (mutations) => {
+          // @ts-expect-error don't trust Mitt's typing and this works.
+          emitter.on(`*`, (_, changes: Array<PendingMutation>) => {
             begin()
-            const pendingMutations = mutations as Array<PendingMutation>
-            pendingMutations.forEach((mutation) => {
+            changes.forEach((change) => {
               write({
-                key: mutation.key,
-                type: mutation.type,
-                value: mutation.changes as { value: string; updated?: boolean },
+                key: change.key,
+                type: change.type,
+                // @ts-expect-error TODO type changes
+                value: change.changes,
               })
             })
             commit()
@@ -308,11 +309,17 @@ describe(`Collection.subscribeChanges`, () => {
       sync: {
         sync: ({ begin, write, commit }) => {
           // Setup a listener for our test events
-          emitter.on(`testEvent`, (changes) => {
+          // @ts-expect-error don't trust Mitt's typing and this works.
+          emitter.on(`*`, (_, changes: Array<PendingMutation>) => {
             begin()
-            if (Array.isArray(changes)) {
-              changes.forEach((change) => write(change))
-            }
+            changes.forEach((change) => {
+              write({
+                key: change.key,
+                type: change.type,
+                // @ts-expect-error TODO type changes
+                value: change.changes,
+              })
+            })
             commit()
           })
 
@@ -417,12 +424,17 @@ describe(`Collection.subscribeChanges`, () => {
           commit()
 
           // Listen for sync events
-          emitter.on(`sync`, (operations) => {
+          // @ts-expect-error don't trust Mitt's typing and this works.
+          emitter.on(`*`, (_, changes: Array<PendingMutation>) => {
             begin()
-            const changeOperations = operations as Array<
-              ChangeMessage<{ value: string }>
-            >
-            changeOperations.forEach((op) => write(op))
+            changes.forEach((change) => {
+              write({
+                key: change.key,
+                type: change.type,
+                // @ts-expect-error TODO type changes
+                value: change.changes,
+              })
+            })
             commit()
           })
         },
