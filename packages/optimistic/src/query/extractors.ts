@@ -17,7 +17,7 @@ export function extractValueFromNestedRow(
 ): unknown {
   // Check if it's a table.column reference
   if (columnRef.includes(".")) {
-    const [tableAlias, colName] = columnRef.split(".")
+    const [tableAlias, colName] = columnRef.split(".") as [string, string]
 
     // Get the table data
     const tableData = nestedRow[tableAlias] as
@@ -179,7 +179,7 @@ export function extractJoinKey<T extends Record<string, unknown>>(
 
     // If it contains a dot, extract the table and column
     if (columnRef.includes(".")) {
-      const [tableAlias, colName] = columnRef.split(".")
+      const [tableAlias, colName] = columnRef.split(".") as [string, string]
       // If this is referencing the current table, extract from row directly
       if (tableAlias === defaultTableAlias) {
         keyValue = row[colName]
@@ -197,7 +197,7 @@ export function extractJoinKey<T extends Record<string, unknown>>(
 
     if (typeof colRef === "string") {
       if (colRef.includes(".")) {
-        const [tableAlias, colName] = colRef.split(".")
+        const [tableAlias, colName] = colRef.split(".") as [string, string]
         // If this is referencing the current table, extract from row directly
         if (tableAlias === defaultTableAlias) {
           keyValue = row[colName]
