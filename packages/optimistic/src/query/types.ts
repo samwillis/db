@@ -12,10 +12,13 @@ export type Input = Record<string, unknown>
 export type Schema = Record<string, Input>
 
 // Context is a Schema with a default input
-export type Context<B extends Schema = Schema, S extends Schema = Schema> = {
-  baseSchema: B
-  schema: S
-  default?: keyof S
+export type Context<
+  TBaseSchema extends Schema = Schema,
+  TSchema extends Schema = Schema,
+> = {
+  baseSchema: TBaseSchema
+  schema: TSchema
+  default?: keyof TSchema
   result?: Record<string, unknown>
 }
 
@@ -35,14 +38,14 @@ type UniqueSecondLevelKeys<T> = {
   >
 }[keyof T]
 
-type InputNames<S extends Schema> = RemoveIndexSignature<{
-  [I in keyof S]: I
+type InputNames<TSchema extends Schema> = RemoveIndexSignature<{
+  [I in keyof TSchema]: I
 }>[keyof RemoveIndexSignature<{
-  [I in keyof S]: I
+  [I in keyof TSchema]: I
 }>]
 
-type UniquePropertyNames<S extends Schema> = UniqueSecondLevelKeys<
-  RemoveIndexSignature<S>
+type UniquePropertyNames<TSchema extends Schema> = UniqueSecondLevelKeys<
+  RemoveIndexSignature<TSchema>
 >
 
 export type RemoveIndexSignature<T> = {
@@ -54,173 +57,185 @@ export type RemoveIndexSignature<T> = {
 }
 
 // Fully qualified references like "@employees.id"
-type QualifiedReferencesOfSchemaString<S extends Schema> =
+type QualifiedReferencesOfSchemaString<TSchema extends Schema> =
   RemoveIndexSignature<{
-    [I in keyof S]: {
-      [P in keyof RemoveIndexSignature<S[I]>]: `@${string & I}.${string & P}`
-    }[keyof RemoveIndexSignature<S[I]>]
+    [I in keyof TSchema]: {
+      [P in keyof RemoveIndexSignature<
+        TSchema[I]
+      >]: `@${string & I}.${string & P}`
+    }[keyof RemoveIndexSignature<TSchema[I]>]
   }>
 
-type QualifiedReferenceString<C extends Context<Schema>> =
+type QualifiedReferenceString<TContext extends Context<Schema>> =
   QualifiedReferencesOfSchemaString<
-    C[`schema`]
-  >[keyof QualifiedReferencesOfSchemaString<C[`schema`]>]
+    TContext[`schema`]
+  >[keyof QualifiedReferencesOfSchemaString<TContext[`schema`]>]
 
 // Fully qualified references like { col: '@employees.id' }
-type QualifiedReferencesOfSchemaObject<S extends Schema> =
+type QualifiedReferencesOfSchemaObject<TSchema extends Schema> =
   RemoveIndexSignature<{
-    [I in keyof S]: {
-      [P in keyof RemoveIndexSignature<S[I]>]: {
+    [I in keyof TSchema]: {
+      [P in keyof RemoveIndexSignature<TSchema[I]>]: {
         col: `${string & I}.${string & P}`
       }
-    }[keyof RemoveIndexSignature<S[I]>]
+    }[keyof RemoveIndexSignature<TSchema[I]>]
   }>
 
-type QualifiedReferenceObject<C extends Context<Schema>> =
+type QualifiedReferenceObject<TContext extends Context<Schema>> =
   QualifiedReferencesOfSchemaObject<
-    C[`schema`]
-  >[keyof QualifiedReferencesOfSchemaObject<C[`schema`]>]
+    TContext[`schema`]
+  >[keyof QualifiedReferencesOfSchemaObject<TContext[`schema`]>]
 
-type QualifiedReference<C extends Context<Schema>> =
-  | QualifiedReferenceString<C>
-  | QualifiedReferenceObject<C>
+type QualifiedReference<TContext extends Context<Schema>> =
+  | QualifiedReferenceString<TContext>
+  | QualifiedReferenceObject<TContext>
 
 type DefaultReferencesOfSchemaString<
-  S extends Schema,
-  D extends keyof S,
+  TSchema extends Schema,
+  TDefault extends keyof TSchema,
 > = RemoveIndexSignature<{
-  [P in keyof S[D]]: `@${string & P}`
+  [P in keyof TSchema[TDefault]]: `@${string & P}`
 }>
 
-type DefaultReferenceString<C extends Context<Schema>> =
-  C[`default`] extends undefined
+type DefaultReferenceString<TContext extends Context<Schema>> =
+  TContext[`default`] extends undefined
     ? never
     : DefaultReferencesOfSchemaString<
-        C[`schema`],
-        Exclude<C[`default`], undefined>
+        TContext[`schema`],
+        Exclude<TContext[`default`], undefined>
       >[keyof DefaultReferencesOfSchemaString<
-        C[`schema`],
-        Exclude<C[`default`], undefined>
+        TContext[`schema`],
+        Exclude<TContext[`default`], undefined>
       >]
 
 type DefaultReferencesOfSchemaObject<
-  S extends Schema,
-  D extends keyof S,
+  TSchema extends Schema,
+  TDefault extends keyof TSchema,
 > = RemoveIndexSignature<{
-  [P in keyof S[D]]: { col: `${string & P}` }
+  [P in keyof TSchema[TDefault]]: { col: `${string & P}` }
 }>
 
-type DefaultReferenceObject<C extends Context<Schema>> =
-  C[`default`] extends undefined
+type DefaultReferenceObject<TContext extends Context<Schema>> =
+  TContext[`default`] extends undefined
     ? never
     : DefaultReferencesOfSchemaObject<
-        C[`schema`],
-        Exclude<C[`default`], undefined>
+        TContext[`schema`],
+        Exclude<TContext[`default`], undefined>
       >[keyof DefaultReferencesOfSchemaObject<
-        C[`schema`],
-        Exclude<C[`default`], undefined>
+        TContext[`schema`],
+        Exclude<TContext[`default`], undefined>
       >]
 
-type DefaultReference<C extends Context<Schema>> =
-  | DefaultReferenceString<C>
-  | DefaultReferenceObject<C>
+type DefaultReference<TContext extends Context<Schema>> =
+  | DefaultReferenceString<TContext>
+  | DefaultReferenceObject<TContext>
 
-type UniqueReferencesOfSchemaString<S extends Schema> = RemoveIndexSignature<{
-  [I in keyof S]: {
-    [P in keyof S[I]]: P extends UniquePropertyNames<S>
-      ? `@${string & P}`
-      : never
-  }[keyof S[I]]
-}>
+type UniqueReferencesOfSchemaString<TSchema extends Schema> =
+  RemoveIndexSignature<{
+    [I in keyof TSchema]: {
+      [P in keyof TSchema[I]]: P extends UniquePropertyNames<TSchema>
+        ? `@${string & P}`
+        : never
+    }[keyof TSchema[I]]
+  }>
 
-type UniqueReferenceString<C extends Context<Schema>> =
+type UniqueReferenceString<TContext extends Context<Schema>> =
   UniqueReferencesOfSchemaString<
-    C[`schema`]
-  >[keyof UniqueReferencesOfSchemaString<C[`schema`]>]
+    TContext[`schema`]
+  >[keyof UniqueReferencesOfSchemaString<TContext[`schema`]>]
 
-type UniqueReferencesOfSchemaObject<S extends Schema> = RemoveIndexSignature<{
-  [I in keyof S]: {
-    [P in keyof S[I]]: P extends UniquePropertyNames<S>
-      ? { col: `${string & P}` }
-      : never
-  }[keyof S[I]]
-}>
+type UniqueReferencesOfSchemaObject<TSchema extends Schema> =
+  RemoveIndexSignature<{
+    [I in keyof TSchema]: {
+      [P in keyof TSchema[I]]: P extends UniquePropertyNames<TSchema>
+        ? { col: `${string & P}` }
+        : never
+    }[keyof TSchema[I]]
+  }>
 
-type UniqueReferenceObject<C extends Context<Schema>> =
+type UniqueReferenceObject<TContext extends Context<Schema>> =
   UniqueReferencesOfSchemaObject<
-    C[`schema`]
-  >[keyof UniqueReferencesOfSchemaObject<C[`schema`]>]
+    TContext[`schema`]
+  >[keyof UniqueReferencesOfSchemaObject<TContext[`schema`]>]
 
-type UniqueReference<C extends Context<Schema>> =
-  | UniqueReferenceString<C>
-  | UniqueReferenceObject<C>
+type UniqueReference<TContext extends Context<Schema>> =
+  | UniqueReferenceString<TContext>
+  | UniqueReferenceObject<TContext>
 
-type InputWildcardString<C extends Context<Schema>> = Flatten<
+type InputWildcardString<TContext extends Context<Schema>> = Flatten<
   {
-    [I in InputNames<C[`schema`]>]: `@${I}.*`
-  }[InputNames<C[`schema`]>]
+    [I in InputNames<TContext[`schema`]>]: `@${I}.*`
+  }[InputNames<TContext[`schema`]>]
 >
 
-type InputWildcardObject<C extends Context<Schema>> = Flatten<
+type InputWildcardObject<TContext extends Context<Schema>> = Flatten<
   {
-    [I in InputNames<C[`schema`]>]: { col: `${I}.*` }
-  }[InputNames<C[`schema`]>]
+    [I in InputNames<TContext[`schema`]>]: { col: `${I}.*` }
+  }[InputNames<TContext[`schema`]>]
 >
 
-type InputWildcard<C extends Context<Schema>> =
-  | InputWildcardString<C>
-  | InputWildcardObject<C>
+type InputWildcard<TContext extends Context<Schema>> =
+  | InputWildcardString<TContext>
+  | InputWildcardObject<TContext>
 
 type AllWildcardString = `@*`
 type AllWildcardObject = { col: `*` }
 type AllWildcard = AllWildcardString | AllWildcardObject
 
-export type PropertyReferenceString<C extends Context<Schema>> =
-  | DefaultReferenceString<C>
-  | QualifiedReferenceString<C>
-  | UniqueReferenceString<C>
+export type PropertyReferenceString<TContext extends Context<Schema>> =
+  | DefaultReferenceString<TContext>
+  | QualifiedReferenceString<TContext>
+  | UniqueReferenceString<TContext>
 
-export type WildcardReferenceString<C extends Context<Schema>> =
-  | InputWildcardString<C>
+export type WildcardReferenceString<TContext extends Context<Schema>> =
+  | InputWildcardString<TContext>
   | AllWildcardString
 
-export type PropertyReferenceObject<C extends Context<Schema>> =
-  | DefaultReferenceObject<C>
-  | QualifiedReferenceObject<C>
-  | UniqueReferenceObject<C>
+export type PropertyReferenceObject<TContext extends Context<Schema>> =
+  | DefaultReferenceObject<TContext>
+  | QualifiedReferenceObject<TContext>
+  | UniqueReferenceObject<TContext>
 
-export type WildcardReferenceObject<C extends Context<Schema>> =
-  | InputWildcardObject<C>
+export type WildcardReferenceObject<TContext extends Context<Schema>> =
+  | InputWildcardObject<TContext>
   | AllWildcardObject
 
-export type PropertyReference<C extends Context<Schema>> =
-  | DefaultReference<C>
-  | QualifiedReference<C>
-  | UniqueReference<C>
+export type PropertyReference<TContext extends Context<Schema>> =
+  | DefaultReference<TContext>
+  | QualifiedReference<TContext>
+  | UniqueReference<TContext>
 
-export type WildcardReference<C extends Context<Schema>> =
-  | InputWildcard<C>
+export type WildcardReference<TContext extends Context<Schema>> =
+  | InputWildcard<TContext>
   | AllWildcard
 
-type InputWithProperty<S extends Schema, P extends string> = {
-  [I in keyof RemoveIndexSignature<S>]: P extends keyof S[I] ? I : never
-}[keyof RemoveIndexSignature<S>]
+type InputWithProperty<TSchema extends Schema, TProperty extends string> = {
+  [I in keyof RemoveIndexSignature<TSchema>]: TProperty extends keyof TSchema[I]
+    ? I
+    : never
+}[keyof RemoveIndexSignature<TSchema>]
 
 export type TypeFromPropertyReference<
-  C extends Context<Schema>,
-  R extends PropertyReference<C>,
-> = R extends
+  TContext extends Context<Schema>,
+  TReference extends PropertyReference<TContext>,
+> = TReference extends
   | `@${infer InputName}.${infer PropName}`
   | { col: `${infer InputName}.${infer PropName}` }
-  ? InputName extends keyof C[`schema`]
-    ? PropName extends keyof C[`schema`][InputName]
-      ? C[`schema`][InputName][PropName]
+  ? InputName extends keyof TContext[`schema`]
+    ? PropName extends keyof TContext[`schema`][InputName]
+      ? TContext[`schema`][InputName][PropName]
       : never
     : never
-  : R extends `@${infer PropName}` | { col: `${infer PropName}` }
-    ? PropName extends keyof C[`schema`][Exclude<C[`default`], undefined>]
-      ? C[`schema`][Exclude<C[`default`], undefined>][PropName]
-      : C[`schema`][InputWithProperty<C[`schema`], PropName>][PropName]
+  : TReference extends `@${infer PropName}` | { col: `${infer PropName}` }
+    ? PropName extends keyof TContext[`schema`][Exclude<
+        TContext[`default`],
+        undefined
+      >]
+      ? TContext[`schema`][Exclude<TContext[`default`], undefined>][PropName]
+      : TContext[`schema`][InputWithProperty<
+          TContext[`schema`],
+          PropName
+        >][PropName]
     : never
 
 /**
@@ -232,88 +247,97 @@ export type TypeFromPropertyReference<
  * - `{ col: 'employees.id' }` -> `id`
  */
 export type ResultKeyFromPropertyReference<
-  C extends Context<Schema>,
-  R extends PropertyReference<C>,
-> = R extends `@${infer _InputName}.${infer PropName}`
+  TContext extends Context<Schema>,
+  TReference extends PropertyReference<TContext>,
+> = TReference extends `@${infer _InputName}.${infer PropName}`
   ? PropName
-  : R extends { col: `${infer _InputName}.${infer PropName}` }
+  : TReference extends { col: `${infer _InputName}.${infer PropName}` }
     ? PropName
-    : R extends `@${infer PropName}`
+    : TReference extends `@${infer PropName}`
       ? PropName
-      : R extends { col: `${infer PropName}` }
+      : TReference extends { col: `${infer PropName}` }
         ? PropName
         : never
 
-export type InputReference<C extends Context<Schema>> = {
-  [I in InputNames<C[`schema`]>]: I
-}[InputNames<C[`schema`]>]
+export type InputReference<TContext extends Context<Schema>> = {
+  [I in InputNames<TContext[`schema`]>]: I
+}[InputNames<TContext[`schema`]>]
 
 export type RenameInput<
-  S extends Schema,
-  I extends keyof S,
-  NewName extends string,
+  TSchema extends Schema,
+  TInput extends keyof TSchema,
+  TNewName extends string,
 > = Flatten<
   {
-    [K in Exclude<keyof S, I>]: S[K]
+    [K in Exclude<keyof TSchema, TInput>]: TSchema[K]
   } & {
-    [P in NewName]: S[I]
+    [P in TNewName]: TSchema[TInput]
   }
 >
 
 export type MaybeRenameInput<
-  S extends Schema,
-  I extends keyof S,
-  NewName extends string | undefined,
-> = NewName extends undefined
-  ? S
-  : RenameInput<S, I, Exclude<NewName, undefined>>
+  TSchema extends Schema,
+  TInput extends keyof TSchema,
+  TNewName extends string | undefined,
+> = TNewName extends undefined
+  ? TSchema
+  : RenameInput<TSchema, TInput, Exclude<TNewName, undefined>>
 
 /**
  * Helper type to combine result types from each select item in a tuple
  */
 export type InferResultTypeFromSelectTuple<
-  C extends Context<Schema>,
-  S extends ReadonlyArray<Select<C>>,
+  TContext extends Context<Schema>,
+  TSelects extends ReadonlyArray<Select<TContext>>,
 > = UnionToIntersection<
   {
-    [K in keyof S]: S[K] extends Select<C> ? InferResultType<C, S[K]> : never
+    [K in keyof TSelects]: TSelects[K] extends Select<TContext>
+      ? InferResultType<TContext, TSelects[K]>
+      : never
   }[number]
 >
 
 /**
  * Convert a union type to an intersection type
  */
-type UnionToIntersection<U> = (U extends any ? (x: U) => void : never) extends (
-  x: infer I
-) => void
+type UnionToIntersection<TUnion> = (
+  TUnion extends any ? (x: TUnion) => void : never
+) extends (x: infer I) => void
   ? I
   : never
 
 /**
  * Infers the result type from a single select item
  */
-type InferResultType<C extends Context<Schema>, S extends Select<C>> =
-  S extends PropertyReferenceString<C>
+type InferResultType<
+  TContext extends Context<Schema>,
+  TSelect extends Select<TContext>,
+> =
+  TSelect extends PropertyReferenceString<TContext>
     ? {
-        [K in ResultKeyFromPropertyReference<C, S>]: TypeFromPropertyReference<
-          C,
-          S
-        >
+        [K in ResultKeyFromPropertyReference<
+          TContext,
+          TSelect
+        >]: TypeFromPropertyReference<TContext, TSelect>
       }
-    : S extends WildcardReferenceString<C>
-      ? S extends `@*`
-        ? InferAllColumnsType<C>
-        : S extends `@${infer TableName}.*`
-          ? TableName extends keyof C[`schema`]
-            ? InferTableColumnsType<C, TableName>
+    : TSelect extends WildcardReferenceString<TContext>
+      ? TSelect extends `@*`
+        ? InferAllColumnsType<TContext>
+        : TSelect extends `@${infer TableName}.*`
+          ? TableName extends keyof TContext[`schema`]
+            ? InferTableColumnsType<TContext, TableName>
             : {}
           : {}
-      : S extends { [alias: string]: PropertyReference<C> | FunctionCall<C> }
+      : TSelect extends {
+            [alias: string]:
+              | PropertyReference<TContext>
+              | FunctionCall<TContext>
+          }
         ? {
-            [K in keyof S]: S[K] extends PropertyReference<C>
-              ? TypeFromPropertyReference<C, S[K]>
-              : S[K] extends FunctionCall<C>
-                ? InferFunctionCallResultType<C, S[K]>
+            [K in keyof TSelect]: TSelect[K] extends PropertyReference<TContext>
+              ? TypeFromPropertyReference<TContext, TSelect[K]>
+              : TSelect[K] extends FunctionCall<TContext>
+                ? InferFunctionCallResultType<TContext, TSelect[K]>
                 : never
           }
         : {}
@@ -321,55 +345,55 @@ type InferResultType<C extends Context<Schema>, S extends Select<C>> =
 /**
  * Infers the result type for all columns from all tables
  */
-type InferAllColumnsType<C extends Context<Schema>> = {
-  [K in keyof C[`schema`]]: {
-    [P in keyof C[`schema`][K]]: C[`schema`][K][P]
+type InferAllColumnsType<TContext extends Context<Schema>> = {
+  [K in keyof TContext[`schema`]]: {
+    [P in keyof TContext[`schema`][K]]: TContext[`schema`][K][P]
   }
-}[keyof C[`schema`]]
+}[keyof TContext[`schema`]]
 
 /**
  * Infers the result type for all columns from a specific table
  */
 type InferTableColumnsType<
-  C extends Context<Schema>,
-  T extends keyof C[`schema`],
+  TContext extends Context<Schema>,
+  TTable extends keyof TContext[`schema`],
 > = {
-  [P in keyof C[`schema`][T]]: C[`schema`][T][P]
+  [P in keyof TContext[`schema`][TTable]]: TContext[`schema`][TTable][P]
 }
 
 /**
  * Infers the result type for a function call
  */
 type InferFunctionCallResultType<
-  C extends Context<Schema>,
-  F extends FunctionCall<C>,
-> = F extends { SUM: any }
+  TContext extends Context<Schema>,
+  TFunctionCall extends FunctionCall<TContext>,
+> = TFunctionCall extends { SUM: any }
   ? number
-  : F extends { COUNT: any }
+  : TFunctionCall extends { COUNT: any }
     ? number
-    : F extends { AVG: any }
+    : TFunctionCall extends { AVG: any }
       ? number
-      : F extends { MIN: any }
-        ? InferOperandType<C, F[`MIN`]>
-        : F extends { MAX: any }
-          ? InferOperandType<C, F[`MAX`]>
-          : F extends { DATE: any }
+      : TFunctionCall extends { MIN: any }
+        ? InferOperandType<TContext, TFunctionCall[`MIN`]>
+        : TFunctionCall extends { MAX: any }
+          ? InferOperandType<TContext, TFunctionCall[`MAX`]>
+          : TFunctionCall extends { DATE: any }
             ? string
-            : F extends { JSON_EXTRACT: any }
+            : TFunctionCall extends { JSON_EXTRACT: any }
               ? unknown
-              : F extends { JSON_EXTRACT_PATH: any }
+              : TFunctionCall extends { JSON_EXTRACT_PATH: any }
                 ? unknown
-                : F extends { UPPER: any }
+                : TFunctionCall extends { UPPER: any }
                   ? string
-                  : F extends { LOWER: any }
+                  : TFunctionCall extends { LOWER: any }
                     ? string
-                    : F extends { COALESCE: any }
-                      ? InferOperandType<C, F[`COALESCE`]>
-                      : F extends { CONCAT: any }
+                    : TFunctionCall extends { COALESCE: any }
+                      ? InferOperandType<TContext, TFunctionCall[`COALESCE`]>
+                      : TFunctionCall extends { CONCAT: any }
                         ? string
-                        : F extends { LENGTH: any }
+                        : TFunctionCall extends { LENGTH: any }
                           ? number
-                          : F extends { ORDER_INDEX: any }
+                          : TFunctionCall extends { ORDER_INDEX: any }
                             ? number
                             : unknown
 
@@ -377,17 +401,17 @@ type InferFunctionCallResultType<
  * Infers the type of an operand
  */
 type InferOperandType<
-  C extends Context<Schema>,
-  O extends ConditionOperand<C>,
+  TContext extends Context<Schema>,
+  TOperand extends ConditionOperand<TContext>,
 > =
-  O extends PropertyReference<C>
-    ? TypeFromPropertyReference<C, O>
-    : O extends LiteralValue
-      ? O
-      : O extends ExplicitLiteral
-        ? O[`value`]
-        : O extends FunctionCall<C>
-          ? InferFunctionCallResultType<C, O>
-          : O extends Array<ConditionOperand<C>>
-            ? InferOperandType<C, O[number]>
+  TOperand extends PropertyReference<TContext>
+    ? TypeFromPropertyReference<TContext, TOperand>
+    : TOperand extends LiteralValue
+      ? TOperand
+      : TOperand extends ExplicitLiteral
+        ? TOperand[`value`]
+        : TOperand extends FunctionCall<TContext>
+          ? InferFunctionCallResultType<TContext, TOperand>
+          : TOperand extends Array<ConditionOperand<TContext>>
+            ? InferOperandType<TContext, TOperand[number]>
             : unknown

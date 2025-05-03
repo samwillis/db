@@ -26,70 +26,76 @@ import type {
 
 type CollectionRef = { [K: string]: Collection<any> }
 
-interface Query<C extends Context<Schema>> extends BaseQuery<C> {
+interface Query<TCtx extends Context<Schema>> extends BaseQuery<TCtx> {
   collections: {
     [K: string]: Collection<any>
   }
 }
 
-export class BaseQueryBuilder<C extends Context<Schema>> {
-  private readonly query: Partial<Query<C>> = {}
+export class BaseQueryBuilder<TCtx extends Context<Schema>> {
+  private readonly query: Partial<Query<TCtx>> = {}
 
   /**
    * Create a new QueryBuilder instance.
    */
-  constructor(query: Partial<Query<C>> = {}) {
+  constructor(query: Partial<Query<TCtx>> = {}) {
     this.query = query
   }
 
-  from<CRef extends CollectionRef>(
-    collectionRef: CRef
+  from<TCollectionRef extends CollectionRef>(
+    collectionRef: TCollectionRef
   ): QueryBuilder<{
     baseSchema: Flatten<
-      C[`baseSchema`] & {
-        [K in keyof CRef & string]: RemoveIndexSignature<
-          (CRef[keyof CRef] extends Collection<infer T> ? T : never) & Input
+      TCtx[`baseSchema`] & {
+        [K in keyof TCollectionRef & string]: RemoveIndexSignature<
+          (TCollectionRef[keyof TCollectionRef] extends Collection<infer T>
+            ? T
+            : never) &
+            Input
         >
       }
     >
     schema: Flatten<{
-      [K in keyof CRef & string]: RemoveIndexSignature<
-        (CRef[keyof CRef] extends Collection<infer T> ? T : never) & Input
+      [K in keyof TCollectionRef & string]: RemoveIndexSignature<
+        (TCollectionRef[keyof TCollectionRef] extends Collection<infer T>
+          ? T
+          : never) &
+          Input
       >
     }>
-    default: keyof CRef & string
+    default: keyof TCollectionRef & string
   }>
 
   from<
     T extends InputReference<{
-      baseSchema: C[`baseSchema`]
-      schema: C[`baseSchema`]
+      baseSchema: TCtx[`baseSchema`]
+      schema: TCtx[`baseSchema`]
     }>,
   >(
     collection: T
   ): QueryBuilder<{
-    baseSchema: C[`baseSchema`]
+    baseSchema: TCtx[`baseSchema`]
     schema: {
-      [K in T]: RemoveIndexSignature<C[`baseSchema`][T]>
+      [K in T]: RemoveIndexSignature<TCtx[`baseSchema`][T]>
     }
     default: T
   }>
 
   from<
     T extends InputReference<{
-      baseSchema: C[`baseSchema`]
-      schema: C[`baseSchema`]
+      baseSchema: TCtx[`baseSchema`]
+      schema: TCtx[`baseSchema`]
     }>,
-    As extends string,
+    TAs extends string,
   >(
     collection: T,
-    as: As
+    as: TAs
   ): QueryBuilder<{
-    baseSchema: C[`baseSchema`]
+    baseSchema: TCtx[`baseSchema`]
     schema: {
-      [K in As]: RemoveIndexSignature<C[`baseSchema`][T]>
+      [K in TAs]: RemoveIndexSignature<TCtx[`baseSchema`][T]>
     }
-    default: As
+    default: TAs
   }>
 
   /**
@@ -103,19 +109,20 @@ export class BaseQueryBuilder<C extends Context<Schema>> {
   from<
     T extends
       | InputReference<{
-          baseSchema: C[`baseSchema`]
-          schema: C[`baseSchema`]
+          baseSchema: TCtx[`baseSchema`]
+          schema: TCtx[`baseSchema`]
         }>
       | CollectionRef,
-    As extends string | undefined,
-  >(collection: T, as?: As) {
+    TAs extends string | undefined,
+  >(collection: T, as?: TAs) {
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
     if (typeof collection === `object` && collection !== null) {
       return this.fromCollectionRef(collection)
     } else if (typeof collection === `string`) {
       return this.fromInputReference(
         collection as InputReference<{
-          baseSchema: C[`baseSchema`]
-          schema: C[`baseSchema`]
+          baseSchema: TCtx[`baseSchema`]
+          schema: TCtx[`baseSchema`]
         }>,
         as
       )
@@ -124,7 +131,9 @@ export class BaseQueryBuilder<C extends Context<Schema>> {
     }
   }
 
-  private fromCollectionRef<CRef extends CollectionRef>(collectionRef: CRef) {
+  private fromCollectionRef<TCollectionRef extends CollectionRef>(
+    collectionRef: TCollectionRef
+  ) {
     const keys = Object.keys(collectionRef)
     if (keys.length !== 1) {
       throw new Error(`Expected exactly one key`)
@@ -135,13 +144,14 @@ export class BaseQueryBuilder<C extends Context<Schema>> {
 
     const newBuilder = new BaseQueryBuilder()
     Object.assign(newBuilder.query, this.query)
-    newBuilder.query.from = key as From<C>
+    newBuilder.query.from = key as From<TCtx>
     newBuilder.query.collections ??= {}
     newBuilder.query.collections[key] = collection
 
     return newBuilder as unknown as QueryBuilder<{
-      baseSchema: C[`baseSchema`] & {
-        [K in keyof CRef & string]: (CRef[keyof CRef] extends Collection<
+      baseSchema: TCtx[`baseSchema`] & {
+        [K in keyof TCollectionRef &
+          string]: (TCollectionRef[keyof TCollectionRef] extends Collection<
           infer T
         >
           ? T
@@ -149,41 +159,42 @@ export class BaseQueryBuilder<C extends Context<Schema>> {
           Input
       }
       schema: {
-        [K in keyof CRef & string]: (CRef[keyof CRef] extends Collection<
+        [K in keyof TCollectionRef &
+          string]: (TCollectionRef[keyof TCollectionRef] extends Collection<
           infer T
         >
           ? T
           : never) &
           Input
       }
-      default: keyof CRef & string
+      default: keyof TCollectionRef & string
     }>
   }
 
   private fromInputReference<
     T extends InputReference<{
-      baseSchema: C[`baseSchema`]
-      schema: C[`baseSchema`]
+      baseSchema: TCtx[`baseSchema`]
+      schema: TCtx[`baseSchema`]
     }>,
-    As extends string | undefined,
-  >(collection: T, as?: As) {
+    TAs extends string | undefined,
+  >(collection: T, as?: TAs) {
     const newBuilder = new BaseQueryBuilder()
     Object.assign(newBuilder.query, this.query)
-    newBuilder.query.from = collection as From<C>
+    newBuilder.query.from = collection as From<TCtx>
     if (as) {
       newBuilder.query.as = as
     }
 
     // Calculate the result type without deep nesting
-    type ResultSchema = As extends undefined
-      ? { [K in T]: C[`baseSchema`][T] }
-      : { [K in string & As]: C[`baseSchema`][T] }
+    type ResultSchema = TAs extends undefined
+      ? { [K in T]: TCtx[`baseSchema`][T] }
+      : { [K in string & TAs]: TCtx[`baseSchema`][T] }
 
-    type ResultDefault = As extends undefined ? T : string & As
+    type ResultDefault = TAs extends undefined ? T : string & TAs
 
     // Use simpler type assertion to avoid excessive depth
     return newBuilder as unknown as QueryBuilder<{
-      baseSchema: C[`baseSchema`]
+      baseSchema: TCtx[`baseSchema`]
       schema: ResultSchema
       default: ResultDefault
     }>
@@ -196,13 +207,17 @@ export class BaseQueryBuilder<C extends Context<Schema>> {
    * @param selects The columns to select
    * @returns A new QueryBuilder with the select clause set
    */
-  select<S extends Array<Select<C>>>(this: QueryBuilder<C>, ...selects: S) {
+  select<TSelects extends Array<Select<TCtx>>>(
+    this: QueryBuilder<TCtx>,
+    ...selects: TSelects
+  ) {
     // Validate function calls in the selects
     // Need to use a type assertion to bypass deep recursive type checking
     const validatedSelects = selects.map((select) => {
       // If the select is an object with aliases, validate each value
       if (
         typeof select === `object` &&
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
         select !== null &&
         !Array.isArray(select)
       ) {
@@ -253,15 +268,15 @@ export class BaseQueryBuilder<C extends Context<Schema>> {
       return select
     })
 
-    const newBuilder = new BaseQueryBuilder<C>(
-      (this as BaseQueryBuilder<C>).query
+    const newBuilder = new BaseQueryBuilder<TCtx>(
+      (this as BaseQueryBuilder<TCtx>).query
     )
-    newBuilder.query.select = validatedSelects as Array<Select<C>>
+    newBuilder.query.select = validatedSelects as Array<Select<TCtx>>
 
     return newBuilder as QueryBuilder<
       Flatten<
-        Omit<C, `result`> & {
-          result: InferResultTypeFromSelectTuple<C, S>
+        Omit<TCtx, `result`> & {
+          result: InferResultTypeFromSelectTuple<TCtx, TSelects>
         }
       >
     >
@@ -271,15 +286,15 @@ export class BaseQueryBuilder<C extends Context<Schema>> {
    * Add a where clause comparing two values.
    */
   where(
-    left: PropertyReferenceString<C> | LiteralValue,
+    left: PropertyReferenceString<TCtx> | LiteralValue,
     operator: Comparator,
-    right: PropertyReferenceString<C> | LiteralValue
-  ): QueryBuilder<C>
+    right: PropertyReferenceString<TCtx> | LiteralValue
+  ): QueryBuilder<TCtx>
 
   /**
    * Add a where clause with a complete condition object.
    */
-  where(condition: Condition<C>): QueryBuilder<C>
+  where(condition: Condition<TCtx>): QueryBuilder<TCtx>
 
   /**
    * Add a where clause to filter the results.
@@ -290,10 +305,10 @@ export class BaseQueryBuilder<C extends Context<Schema>> {
    * @param right Optional right operand
    * @returns A new QueryBuilder with the where clause added
    */
-  where(leftOrCondition: any, operator?: any, right?: any): QueryBuilder<C> {
+  where(leftOrCondition: any, operator?: any, right?: any): QueryBuilder<TCtx> {
     // Create a new builder with a copy of the current query
     // Use simplistic approach to avoid deep type errors
-    const newBuilder = new BaseQueryBuilder<C>()
+    const newBuilder = new BaseQueryBuilder<TCtx>()
     Object.assign(newBuilder.query, this.query)
 
     let condition: any
@@ -316,7 +331,7 @@ export class BaseQueryBuilder<C extends Context<Schema>> {
       newBuilder.query.where = andArray
     }
 
-    return newBuilder as unknown as QueryBuilder<C>
+    return newBuilder as unknown as QueryBuilder<TCtx>
   }
 
   /**
@@ -324,16 +339,16 @@ export class BaseQueryBuilder<C extends Context<Schema>> {
    * For filtering results after they have been grouped.
    */
   having(
-    left: PropertyReferenceString<C> | LiteralValue,
+    left: PropertyReferenceString<TCtx> | LiteralValue,
     operator: Comparator,
-    right: PropertyReferenceString<C> | LiteralValue
-  ): QueryBuilder<C>
+    right: PropertyReferenceString<TCtx> | LiteralValue
+  ): QueryBuilder<TCtx>
 
   /**
    * Add a having clause with a complete condition object.
    * For filtering results after they have been grouped.
    */
-  having(condition: Condition<C>): QueryBuilder<C>
+  having(condition: Condition<TCtx>): QueryBuilder<TCtx>
 
   /**
    * Add a having clause to filter the grouped results.
@@ -344,9 +359,13 @@ export class BaseQueryBuilder<C extends Context<Schema>> {
    * @param right Optional right operand
    * @returns A new QueryBuilder with the having clause added
    */
-  having(leftOrCondition: any, operator?: any, right?: any): QueryBuilder<C> {
+  having(
+    leftOrCondition: any,
+    operator?: any,
+    right?: any
+  ): QueryBuilder<TCtx> {
     // Create a new builder with a copy of the current query
-    const newBuilder = new BaseQueryBuilder<C>()
+    const newBuilder = new BaseQueryBuilder<TCtx>()
     Object.assign(newBuilder.query, this.query)
 
     let condition: any
@@ -369,7 +388,7 @@ export class BaseQueryBuilder<C extends Context<Schema>> {
       newBuilder.query.having = andArray
     }
 
-    return newBuilder as QueryBuilder<C>
+    return newBuilder as QueryBuilder<TCtx>
   }
 
   /**
@@ -377,43 +396,52 @@ export class BaseQueryBuilder<C extends Context<Schema>> {
    *
    * @returns The built query
    */
-  buildQuery(): Query<C> {
+  buildQuery(): Query<TCtx> {
     // Create a copy of the query to avoid exposing the internal state directly
-    return { ...this.query } as Query<C>
+    return { ...this.query } as Query<TCtx>
   }
 
   /**
    * Add a join clause to the query using a CollectionRef.
    */
-  join<CRef extends CollectionRef>(joinClause: {
+  join<TCollectionRef extends CollectionRef>(joinClause: {
     type: `inner` | `left` | `right` | `full` | `cross`
-    from: CRef
+    from: TCollectionRef
     on: Condition<
       Flatten<{
-        baseSchema: C[`baseSchema`]
-        schema: C[`schema`] & {
-          [K in keyof CRef & string]: RemoveIndexSignature<
-            (CRef[keyof CRef] extends Collection<infer T> ? T : never) & Input
+        baseSchema: TCtx[`baseSchema`]
+        schema: TCtx[`schema`] & {
+          [K in keyof TCollectionRef & string]: RemoveIndexSignature<
+            (TCollectionRef[keyof TCollectionRef] extends Collection<infer T>
+              ? T
+              : never) &
+              Input
           >
         }
       }>
     >
     where?: Condition<
       Flatten<{
-        baseSchema: C[`baseSchema`]
+        baseSchema: TCtx[`baseSchema`]
         schema: {
-          [K in keyof CRef & string]: RemoveIndexSignature<
-            (CRef[keyof CRef] extends Collection<infer T> ? T : never) & Input
+          [K in keyof TCollectionRef & string]: RemoveIndexSignature<
+            (TCollectionRef[keyof TCollectionRef] extends Collection<infer T>
+              ? T
+              : never) &
+              Input
           >
         }
       }>
     >
   }): QueryBuilder<
     Flatten<
-      Omit<C, `schema`> & {
-        schema: C[`schema`] & {
-          [K in keyof CRef & string]: RemoveIndexSignature<
-            (CRef[keyof CRef] extends Collection<infer T> ? T : never) & Input
+      Omit<TCtx, `schema`> & {
+        schema: TCtx[`schema`] & {
+          [K in keyof TCollectionRef & string]: RemoveIndexSignature<
+            (TCollectionRef[keyof TCollectionRef] extends Collection<infer T>
+              ? T
+              : never) &
+              Input
           >
         }
       }
@@ -426,31 +454,31 @@ export class BaseQueryBuilder<C extends Context<Schema>> {
    */
   join<
     T extends InputReference<{
-      baseSchema: C[`baseSchema`]
-      schema: C[`baseSchema`]
+      baseSchema: TCtx[`baseSchema`]
+      schema: TCtx[`baseSchema`]
     }>,
   >(joinClause: {
     type: `inner` | `left` | `right` | `full` | `cross`
     from: T
     on: Condition<
       Flatten<{
-        baseSchema: C[`baseSchema`]
-        schema: C[`schema`] & {
-          [K in T]: RemoveIndexSignature<C[`baseSchema`][T]>
+        baseSchema: TCtx[`baseSchema`]
+        schema: TCtx[`schema`] & {
+          [K in T]: RemoveIndexSignature<TCtx[`baseSchema`][T]>
         }
       }>
     >
     where?: Condition<
       Flatten<{
-        baseSchema: C[`baseSchema`]
-        schema: { [K in T]: RemoveIndexSignature<C[`baseSchema`][T]> }
+        baseSchema: TCtx[`baseSchema`]
+        schema: { [K in T]: RemoveIndexSignature<TCtx[`baseSchema`][T]> }
       }>
     >
   }): QueryBuilder<
     Flatten<
-      Omit<C, `schema`> & {
-        schema: C[`schema`] & {
-          [K in T]: RemoveIndexSignature<C[`baseSchema`][T]>
+      Omit<TCtx, `schema`> & {
+        schema: TCtx[`schema`] & {
+          [K in T]: RemoveIndexSignature<TCtx[`baseSchema`][T]>
         }
       }
     >
@@ -460,86 +488,93 @@ export class BaseQueryBuilder<C extends Context<Schema>> {
    * Add a join clause to the query with a specified alias.
    */
   join<
-    T extends InputReference<{
-      baseSchema: C[`baseSchema`]
-      schema: C[`baseSchema`]
+    TFrom extends InputReference<{
+      baseSchema: TCtx[`baseSchema`]
+      schema: TCtx[`baseSchema`]
     }>,
-    A extends string,
+    TAs extends string,
   >(joinClause: {
     type: `inner` | `left` | `right` | `full` | `cross`
-    from: T
-    as: A
+    from: TFrom
+    as: TAs
     on: Condition<
       Flatten<{
-        baseSchema: C[`baseSchema`]
-        schema: C[`schema`] & {
-          [K in A]: RemoveIndexSignature<C[`baseSchema`][T]>
+        baseSchema: TCtx[`baseSchema`]
+        schema: TCtx[`schema`] & {
+          [K in TAs]: RemoveIndexSignature<TCtx[`baseSchema`][TFrom]>
         }
       }>
     >
     where?: Condition<
       Flatten<{
-        baseSchema: C[`baseSchema`]
-        schema: { [K in A]: RemoveIndexSignature<C[`baseSchema`][T]> }
+        baseSchema: TCtx[`baseSchema`]
+        schema: { [K in TAs]: RemoveIndexSignature<TCtx[`baseSchema`][TFrom]> }
       }>
     >
   }): QueryBuilder<
     Flatten<
-      Omit<C, `schema`> & {
-        schema: C[`schema`] & {
-          [K in A]: RemoveIndexSignature<C[`baseSchema`][T]>
+      Omit<TCtx, `schema`> & {
+        schema: TCtx[`schema`] & {
+          [K in TAs]: RemoveIndexSignature<TCtx[`baseSchema`][TFrom]>
         }
       }
     >
   >
 
   join<
-    T extends
+    TFrom extends
       | InputReference<{
-          baseSchema: C[`baseSchema`]
-          schema: C[`baseSchema`]
+          baseSchema: TCtx[`baseSchema`]
+          schema: TCtx[`baseSchema`]
         }>
       | CollectionRef,
-    A extends string | undefined = undefined,
+    TAs extends string | undefined = undefined,
   >(joinClause: {
     type: `inner` | `left` | `right` | `full` | `cross`
-    from: T
-    as?: A
+    from: TFrom
+    as?: TAs
     on: Condition<
       Flatten<{
-        baseSchema: C[`baseSchema`]
-        schema: C[`schema`] &
-          (T extends CollectionRef
+        baseSchema: TCtx[`baseSchema`]
+        schema: TCtx[`schema`] &
+          (TFrom extends CollectionRef
             ? {
-                [K in keyof T & string]: RemoveIndexSignature<
-                  (T[keyof T] extends Collection<infer T> ? T : never) & Input
+                [K in keyof TFrom & string]: RemoveIndexSignature<
+                  (TFrom[keyof TFrom] extends Collection<infer T> ? T : never) &
+                    Input
                 >
               }
-            : T extends InputReference<infer T>
+            : TFrom extends InputReference<infer TFrom>
               ? {
-                  [K in keyof T & string]: RemoveIndexSignature<T[keyof T]>
+                  [K in keyof TFrom & string]: RemoveIndexSignature<
+                    TFrom[keyof TFrom]
+                  >
                 }
               : never)
       }>
     >
     where?: Condition<
       Flatten<{
-        baseSchema: C[`baseSchema`]
-        schema: C[`schema`] &
-          (T extends CollectionRef
+        baseSchema: TCtx[`baseSchema`]
+        schema: TCtx[`schema`] &
+          (TFrom extends CollectionRef
             ? {
-                [K in keyof T & string]: RemoveIndexSignature<
-                  (T[keyof T] extends Collection<infer T> ? T : never) & Input
+                [K in keyof TFrom & string]: RemoveIndexSignature<
+                  (TFrom[keyof TFrom] extends Collection<infer T> ? T : never) &
+                    Input
                 >
               }
-            : T extends InputReference<infer T>
+            : TFrom extends InputReference<infer TFrom>
               ? {
-                  [K in keyof T & string]: RemoveIndexSignature<T[keyof T]>
+                  [K in keyof TFrom & string]: RemoveIndexSignature<
+                    TFrom[keyof TFrom]
+                  >
                 }
               : never)
       }>
     >
   }): QueryBuilder<any> {
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
     if (typeof joinClause.from === `object` && joinClause.from !== null) {
       return this.joinCollectionRef(
         joinClause as {
@@ -554,10 +589,10 @@ export class BaseQueryBuilder<C extends Context<Schema>> {
         joinClause as {
           type: `inner` | `left` | `right` | `full` | `cross`
           from: InputReference<{
-            baseSchema: C[`baseSchema`]
-            schema: C[`baseSchema`]
+            baseSchema: TCtx[`baseSchema`]
+            schema: TCtx[`baseSchema`]
           }>
-          as?: A
+          as?: TAs
           on: Condition<any>
           where?: Condition<any>
         }
@@ -565,14 +600,14 @@ export class BaseQueryBuilder<C extends Context<Schema>> {
     }
   }
 
-  private joinCollectionRef<CRef extends CollectionRef>(joinClause: {
+  private joinCollectionRef<TCollectionRef extends CollectionRef>(joinClause: {
     type: `inner` | `left` | `right` | `full` | `cross`
-    from: CRef
+    from: TCollectionRef
     on: Condition<any>
     where?: Condition<any>
   }): QueryBuilder<any> {
     // Create a new builder with a copy of the current query
-    const newBuilder = new BaseQueryBuilder<C>()
+    const newBuilder = new BaseQueryBuilder<TCtx>()
     Object.assign(newBuilder.query, this.query)
 
     // Get the collection key
@@ -592,7 +627,7 @@ export class BaseQueryBuilder<C extends Context<Schema>> {
       from: key,
       on: joinClause.on,
       where: joinClause.where,
-    } as JoinClause<C>
+    } as JoinClause<TCtx>
 
     // Add the join clause to the query
     if (!newBuilder.query.join) {
@@ -608,10 +643,13 @@ export class BaseQueryBuilder<C extends Context<Schema>> {
     // Return the new builder with updated schema type
     return newBuilder as QueryBuilder<
       Flatten<
-        Omit<C, `schema`> & {
-          schema: C[`schema`] & {
-            [K in keyof CRef & string]: RemoveIndexSignature<
-              (CRef[keyof CRef] extends Collection<infer T> ? T : never) & Input
+        Omit<TCtx, `schema`> & {
+          schema: TCtx[`schema`] & {
+            [K in keyof TCollectionRef & string]: RemoveIndexSignature<
+              (TCollectionRef[keyof TCollectionRef] extends Collection<infer T>
+                ? T
+                : never) &
+                Input
             >
           }
         }
@@ -620,24 +658,24 @@ export class BaseQueryBuilder<C extends Context<Schema>> {
   }
 
   private joinInputReference<
-    T extends InputReference<{
-      baseSchema: C[`baseSchema`]
-      schema: C[`baseSchema`]
+    TFrom extends InputReference<{
+      baseSchema: TCtx[`baseSchema`]
+      schema: TCtx[`baseSchema`]
     }>,
-    A extends string | undefined = undefined,
+    TAs extends string | undefined = undefined,
   >(joinClause: {
     type: `inner` | `left` | `right` | `full` | `cross`
-    from: T
-    as?: A
+    from: TFrom
+    as?: TAs
     on: Condition<any>
     where?: Condition<any>
   }): QueryBuilder<any> {
     // Create a new builder with a copy of the current query
-    const newBuilder = new BaseQueryBuilder<C>()
+    const newBuilder = new BaseQueryBuilder<TCtx>()
     Object.assign(newBuilder.query, this.query)
 
     // Create a copy of the join clause for the query
-    const joinClauseCopy = { ...joinClause } as JoinClause<C>
+    const joinClauseCopy = { ...joinClause } as JoinClause<TCtx>
 
     // Add the join clause to the query
     if (!newBuilder.query.join) {
@@ -652,9 +690,9 @@ export class BaseQueryBuilder<C extends Context<Schema>> {
     // Return the new builder with updated schema type
     return newBuilder as QueryBuilder<
       Flatten<
-        Omit<C, `schema`> & {
-          schema: C[`schema`] & {
-            [K in typeof _effectiveAlias]: C[`baseSchema`][T]
+        Omit<TCtx, `schema`> & {
+          schema: TCtx[`schema`] & {
+            [K in typeof _effectiveAlias]: TCtx[`baseSchema`][TFrom]
           }
         }
       >
@@ -668,15 +706,15 @@ export class BaseQueryBuilder<C extends Context<Schema>> {
    * @param orderBy The order specification
    * @returns A new QueryBuilder with the orderBy clause set
    */
-  orderBy(orderBy: OrderBy<C>): QueryBuilder<C> {
+  orderBy(orderBy: OrderBy<TCtx>): QueryBuilder<TCtx> {
     // Create a new builder with a copy of the current query
-    const newBuilder = new BaseQueryBuilder<C>()
+    const newBuilder = new BaseQueryBuilder<TCtx>()
     Object.assign(newBuilder.query, this.query)
 
     // Set the orderBy clause
     newBuilder.query.orderBy = orderBy
 
-    return newBuilder as QueryBuilder<C>
+    return newBuilder as QueryBuilder<TCtx>
   }
 
   /**
@@ -685,15 +723,15 @@ export class BaseQueryBuilder<C extends Context<Schema>> {
    * @param limit Maximum number of results to return
    * @returns A new QueryBuilder with the limit set
    */
-  limit(limit: Limit<C>): QueryBuilder<C> {
+  limit(limit: Limit<TCtx>): QueryBuilder<TCtx> {
     // Create a new builder with a copy of the current query
-    const newBuilder = new BaseQueryBuilder<C>()
+    const newBuilder = new BaseQueryBuilder<TCtx>()
     Object.assign(newBuilder.query, this.query)
 
     // Set the limit
     newBuilder.query.limit = limit
 
-    return newBuilder as QueryBuilder<C>
+    return newBuilder as QueryBuilder<TCtx>
   }
 
   /**
@@ -702,15 +740,15 @@ export class BaseQueryBuilder<C extends Context<Schema>> {
    * @param offset Number of results to skip
    * @returns A new QueryBuilder with the offset set
    */
-  offset(offset: Offset<C>): QueryBuilder<C> {
+  offset(offset: Offset<TCtx>): QueryBuilder<TCtx> {
     // Create a new builder with a copy of the current query
-    const newBuilder = new BaseQueryBuilder<C>()
+    const newBuilder = new BaseQueryBuilder<TCtx>()
     Object.assign(newBuilder.query, this.query)
 
     // Set the offset
     newBuilder.query.offset = offset
 
-    return newBuilder as QueryBuilder<C>
+    return newBuilder as QueryBuilder<TCtx>
   }
 
   /**
@@ -720,16 +758,16 @@ export class BaseQueryBuilder<C extends Context<Schema>> {
    * @returns A new QueryBuilder with the keyBy clause set
    */
   keyBy(
-    keyBy: PropertyReference<C> | Array<PropertyReference<C>>
-  ): QueryBuilder<C> {
+    keyBy: PropertyReference<TCtx> | Array<PropertyReference<TCtx>>
+  ): QueryBuilder<TCtx> {
     // Create a new builder with a copy of the current query
-    const newBuilder = new BaseQueryBuilder<C>()
+    const newBuilder = new BaseQueryBuilder<TCtx>()
     Object.assign(newBuilder.query, this.query)
 
     // Set the keyBy clause
     newBuilder.query.keyBy = keyBy
 
-    return newBuilder as QueryBuilder<C>
+    return newBuilder as QueryBuilder<TCtx>
   }
 
   /**
@@ -739,16 +777,16 @@ export class BaseQueryBuilder<C extends Context<Schema>> {
    * @returns A new QueryBuilder with the groupBy clause set
    */
   groupBy(
-    groupBy: PropertyReference<C> | Array<PropertyReference<C>>
-  ): QueryBuilder<C> {
+    groupBy: PropertyReference<TCtx> | Array<PropertyReference<TCtx>>
+  ): QueryBuilder<TCtx> {
     // Create a new builder with a copy of the current query
-    const newBuilder = new BaseQueryBuilder<C>()
+    const newBuilder = new BaseQueryBuilder<TCtx>()
     Object.assign(newBuilder.query, this.query)
 
     // Set the groupBy clause
     newBuilder.query.groupBy = groupBy
 
-    return newBuilder as QueryBuilder<C>
+    return newBuilder as QueryBuilder<TCtx>
   }
 
   /**
@@ -759,32 +797,32 @@ export class BaseQueryBuilder<C extends Context<Schema>> {
    * @param queryBuilderCallback A function that builds the CTE query
    * @returns A new QueryBuilder with the CTE added
    */
-  with<N extends string, R = Record<string, unknown>>(
-    name: N,
+  with<TName extends string, TResult = Record<string, unknown>>(
+    name: TName,
     queryBuilderCallback: (
       builder: InitialQueryBuilder<{
-        baseSchema: C[`baseSchema`]
+        baseSchema: TCtx[`baseSchema`]
         schema: {}
       }>
     ) => QueryBuilder<any>
   ): InitialQueryBuilder<{
-    baseSchema: C[`baseSchema`] & { [K in N]: R }
-    schema: C[`schema`]
+    baseSchema: TCtx[`baseSchema`] & { [K in TName]: TResult }
+    schema: TCtx[`schema`]
   }> {
     // Create a new builder with a copy of the current query
-    const newBuilder = new BaseQueryBuilder<C>()
+    const newBuilder = new BaseQueryBuilder<TCtx>()
     Object.assign(newBuilder.query, this.query)
 
     // Create a new builder for the CTE
     const cteBuilder = new BaseQueryBuilder<{
-      baseSchema: C[`baseSchema`]
+      baseSchema: TCtx[`baseSchema`]
       schema: {}
     }>()
 
     // Get the CTE query from the callback
     const cteQueryBuilder = queryBuilderCallback(
       cteBuilder as InitialQueryBuilder<{
-        baseSchema: C[`baseSchema`]
+        baseSchema: TCtx[`baseSchema`]
         schema: {}
       }>
     )
@@ -807,34 +845,37 @@ export class BaseQueryBuilder<C extends Context<Schema>> {
 
     // Use a type cast that simplifies the type structure to avoid recursion
     return newBuilder as unknown as InitialQueryBuilder<{
-      baseSchema: C[`baseSchema`] & { [K in N]: R }
-      schema: C[`schema`]
+      baseSchema: TCtx[`baseSchema`] & { [K in TName]: TResult }
+      schema: TCtx[`schema`]
     }>
   }
 }
 
-type InitialQueryBuilder<C extends Context<Schema>> = Pick<
-  BaseQueryBuilder<C>,
+type InitialQueryBuilder<TCtx extends Context<Schema>> = Pick<
+  BaseQueryBuilder<TCtx>,
   `from` | `with`
 >
 
-type QueryBuilder<C extends Context<Schema>> = Omit<BaseQueryBuilder<C>, `from`>
+type QueryBuilder<TCtx extends Context<Schema>> = Omit<
+  BaseQueryBuilder<TCtx>,
+  `from`
+>
 
 /**
  * Create a new query builder with the given schema
  */
-export function queryBuilder<B extends Schema = {}>() {
+export function queryBuilder<TBaseSchema extends Schema = {}>() {
   return new BaseQueryBuilder<{
-    baseSchema: B
+    baseSchema: TBaseSchema
     schema: {}
   }>() as InitialQueryBuilder<{
-    baseSchema: B
+    baseSchema: TBaseSchema
     schema: {}
   }>
 }
 
-export type ResultFromQueryBuilder<QB> = Flatten<
-  QB extends QueryBuilder<infer C>
+export type ResultFromQueryBuilder<TQueryBuilder> = Flatten<
+  TQueryBuilder extends QueryBuilder<infer C>
     ? C extends { result: infer R }
       ? R
       : never
