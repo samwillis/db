@@ -8,12 +8,6 @@ import type {
   PendingMutation,
 } from "../src/types"
 
-// Define custom event types for mitt
-type Events = {
-  sync: Array<ChangeMessage<any>> | Array<PendingMutation>
-  testEvent: Array<ChangeMessage<{ value: string }>>
-}
-
 // Helper function to wait for changes to be processed
 const waitForChanges = () => new Promise((resolve) => setTimeout(resolve, 10))
 
@@ -69,7 +63,7 @@ describe(`Collection.subscribeChanges`, () => {
   })
 
   it(`should emit changes from synced operations using mitt emitter`, async () => {
-    const emitter = mitt<Events>()
+    const emitter = mitt()
     const callback = vi.fn()
 
     // Create collection with sync capability using the mitt pattern from collection.test.ts
@@ -78,11 +72,17 @@ describe(`Collection.subscribeChanges`, () => {
       sync: {
         sync: ({ begin, write, commit }) => {
           // Setup a listener for our test events
-          emitter.on(`testEvent`, (changes) => {
+          // @ts-expect-error don't trust Mitt's typing and this works.
+          emitter.on(`*`, (_, changes: Array<PendingMutation>) => {
             begin()
-            if (Array.isArray(changes)) {
-              changes.forEach((change) => write(change))
-            }
+            changes.forEach((change) => {
+              write({
+                key: change.key,
+                type: change.type,
+                // @ts-expect-error TODO type changes
+                value: change.changes,
+              })
+            })
             commit()
           })
 
@@ -105,7 +105,7 @@ describe(`Collection.subscribeChanges`, () => {
       {
         type: `insert`,
         key: `syncItem1`,
-        value: { value: `sync value 1` },
+        changes: { value: `sync value 1` },
       },
     ])
 
@@ -134,7 +134,7 @@ describe(`Collection.subscribeChanges`, () => {
       {
         type: `update`,
         key: `syncItem1`,
-        value: { value: `updated sync value` },
+        changes: { value: `updated sync value` },
       },
     ])
 
@@ -161,7 +161,7 @@ describe(`Collection.subscribeChanges`, () => {
       {
         type: `delete`,
         key: `syncItem1`,
-        value: { value: `updated sync value` },
+        changes: { value: `updated sync value` },
       },
     ])
 
@@ -184,7 +184,7 @@ describe(`Collection.subscribeChanges`, () => {
   })
 
   it(`should emit changes from optimistic operations`, async () => {
-    const emitter = mitt<Events>()
+    const emitter = mitt()
     const callback = vi.fn()
 
     // Create collection with mutation capability
@@ -300,7 +300,7 @@ describe(`Collection.subscribeChanges`, () => {
   })
 
   it(`should handle both synced and optimistic changes together`, async () => {
-    const emitter = mitt<Events>()
+    const emitter = mitt()
     const callback = vi.fn()
 
     // Create collection with both sync and mutation capabilities
@@ -328,7 +328,10 @@ describe(`Collection.subscribeChanges`, () => {
           commit()
         },
       },
-      mutationFn: async () => {},
+      mutationFn: async ({ transaction }) => {
+        emitter.emit(`sync`, transaction.mutations)
+        return Promise.resolve()
+      },
     })
 
     // Subscribe to changes
@@ -338,13 +341,14 @@ describe(`Collection.subscribeChanges`, () => {
     callback.mockReset()
 
     // First add a synced item
-    emitter.emit(`testEvent`, [
+    emitter.emit(`sync`, [
       {
         type: `insert`,
         key: `syncedItem`,
-        value: { value: `synced value` },
+        changes: { value: `synced value` },
       },
     ])
+    await waitForChanges()
 
     // Verify synced insert was emitted
     expect(callback).toHaveBeenCalledTimes(1)
@@ -366,16 +370,30 @@ describe(`Collection.subscribeChanges`, () => {
       })
     }
 
+    // We don't await here as the optimistic update is sync
+
     // Verify the optimistic update was emitted
     expect(callback).toHaveBeenCalledTimes(1)
+    expect(callback.mock.calls[0]![0]).toEqual([
+      {
+        type: `update`,
+        key: `optimisticItem`,
+        value: {
+          value: `updated optimistic value`,
+        },
+        previousValue: {
+          value: `optimistic value`,
+        },
+      },
+    ])
     callback.mockReset()
 
     // Then update the synced item with a synced update
-    emitter.emit(`testEvent`, [
+    emitter.emit(`sync`, [
       {
         type: `update`,
         key: `syncedItem`,
-        value: { value: `updated synced value` },
+        changes: { value: `updated synced value` },
       },
     ])
 
@@ -401,7 +419,7 @@ describe(`Collection.subscribeChanges`, () => {
   })
 
   it(`should only emit differences between states, not whole state`, async () => {
-    const emitter = mitt<Events>()
+    const emitter = mitt()
     const callback = vi.fn()
 
     // Create collection with initial data
