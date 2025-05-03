@@ -88,38 +88,38 @@ export function processOrderBy(
     // For multiple orderBy columns, create a composite key
     if (orderByItems.length > 1) {
       return orderByItems.map((item) => {
-        const value = evaluateOperandOnNestedRow(
+        const val = evaluateOperandOnNestedRow(
           nestedRow,
           item.operand,
           mainTableAlias
         )
 
         // Reverse the value for 'desc' ordering
-        return item.direction === `desc` && typeof value === `number`
-          ? -value
-          : item.direction === `desc` && typeof value === `string`
+        return item.direction === `desc` && typeof val === `number`
+          ? -val
+          : item.direction === `desc` && typeof val === `string`
             ? String.fromCharCode(
-                ...[...value].map((c) => 0xffff - c.charCodeAt(0))
+                ...[...val].map((c) => 0xffff - c.charCodeAt(0))
               )
-            : value
+            : val
       })
     } else if (orderByItems.length === 1) {
       // For a single orderBy column, use the value directly
       const item = orderByItems[0]
-      const value = evaluateOperandOnNestedRow(
+      const val = evaluateOperandOnNestedRow(
         nestedRow,
         item!.operand,
         mainTableAlias
       )
 
       // Reverse the value for 'desc' ordering
-      return item!.direction === `desc` && typeof value === `number`
-        ? -value
-        : item!.direction === `desc` && typeof value === `string`
+      return item!.direction === `desc` && typeof val === `number`
+        ? -val
+        : item!.direction === `desc` && typeof val === `string`
           ? String.fromCharCode(
-              ...[...value].map((c) => 0xffff - c.charCodeAt(0))
+              ...[...val].map((c) => 0xffff - c.charCodeAt(0))
             )
-          : value
+          : val
     }
 
     // Default case - no ordering

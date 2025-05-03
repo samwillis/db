@@ -242,7 +242,10 @@ export function evaluateFunction(
   functionName: AllowedFunctionName,
   arg: unknown
 ): unknown {
-  const implementation = functionImplementations[functionName]
+  const implementation = functionImplementations[functionName] as
+    | FunctionImplementation
+    | undefined // Double check that the implementation is defined
+
   if (!implementation) {
     throw new Error(`Unknown function: ${functionName}`)
   }

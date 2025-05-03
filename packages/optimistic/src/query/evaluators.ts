@@ -65,7 +65,8 @@ export function evaluateConditionOnNestedRow(
         // Apply the logical operator
         if (logicalOp === `and`) {
           result = result && nextResult
-        } else if (logicalOp === `or`) {
+        } else {
+          // logicalOp === `or`
           result = result || nextResult
         }
       }
@@ -101,7 +102,8 @@ export function evaluateConditionOnNestedRow(
             mainTableAlias,
             joinedTableAlias
           )
-      } else if (operator === `or`) {
+      } else {
+        // logicalOp === `or`
         result =
           result ||
           evaluateConditionOnNestedRow(

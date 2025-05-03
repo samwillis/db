@@ -29,7 +29,7 @@ export function processSelect(
       for (const item of query.select) {
         if (typeof item === `string`) {
           // Handle wildcard select - all columns from all tables
-          if (item === `@*`) {
+          if ((item as string) === `@*`) {
             // For grouped results, just return the row as is
             if (isGroupedResult) {
               Object.assign(result, nestedRow)

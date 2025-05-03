@@ -36,11 +36,7 @@ export function extractValueFromNestedRow(
     // If no table is specified, first try to find in the main table if provided
     if (mainTableAlias && nestedRow[mainTableAlias]) {
       const mainTableData = nestedRow[mainTableAlias] as Record<string, unknown>
-      if (
-        mainTableData &&
-        typeof mainTableData === `object` &&
-        columnRef in mainTableData
-      ) {
+      if (typeof mainTableData === `object` && columnRef in mainTableData) {
         return mainTableData[columnRef]
       }
     }
@@ -51,11 +47,7 @@ export function extractValueFromNestedRow(
         string,
         unknown
       >
-      if (
-        joinedTableData &&
-        typeof joinedTableData === `object` &&
-        columnRef in joinedTableData
-      ) {
+      if (typeof joinedTableData === `object` && columnRef in joinedTableData) {
         return joinedTableData[columnRef]
       }
     }

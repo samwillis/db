@@ -230,7 +230,7 @@ export function isValueInArray(
   }
 
   // Handle objects/arrays by comparing stringified versions
-  if (typeof value === `object` && value !== null) {
+  if (typeof value === `object`) {
     const valueStr = JSON.stringify(value)
     return array.some((item) => {
       if (typeof item === `object` && item !== null) {
