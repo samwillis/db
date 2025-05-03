@@ -1,3 +1,7 @@
-export * from "./schema.js"
-export * from "./types.js"
+export {
+  queryBuilder,
+  BaseQueryBuilder,
+  type ResultFromQueryBuilder,
+} from "./query-builder.js"
 export { compileQuery } from "./compiler.js"
+export type { Query } from "./schema.js"

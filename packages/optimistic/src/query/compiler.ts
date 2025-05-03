@@ -48,7 +48,9 @@ export function compileQuery<T extends IStreamBuilder<unknown>>(
       const compiledWithQuery = compileQuery(withQueryWithoutWith, allInputs)
 
       // Add the compiled query to the inputs map using its alias
-      allInputs[withQuery.as] = compiledWithQuery
+      allInputs[withQuery.as] = compiledWithQuery as IStreamBuilder<
+        Record<string, unknown>
+      >
     }
   }
 

@@ -5,6 +5,7 @@ import type {
   PropertyReferenceString,
   WildcardReferenceString,
 } from "./types.js"
+import type { Collection } from "../collection"
 
 // Identifiers
 export type ColumnName<TColumnNames extends string> = TColumnNames
@@ -233,6 +234,9 @@ export interface Query<TContext extends Context = Context>
   extends BaseQuery<TContext> {
   keyBy?: PropertyReference<TContext> | Array<PropertyReference<TContext>>
   with?: Array<WithQuery<TContext>>
+  collections?: {
+    [K: string]: Collection<any>
+  }
 }
 
 // A WithQuery is a query that is used as a Common Table Expression (CTE)

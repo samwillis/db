@@ -1,6 +1,5 @@
 import type { Collection } from "../collection"
 import type {
-  Query as BaseQuery,
   Comparator,
   Condition,
   From,
@@ -9,6 +8,7 @@ import type {
   LiteralValue,
   Offset,
   OrderBy,
+  Query,
   Select,
   WithQuery,
 } from "./schema.js"
@@ -26,19 +26,13 @@ import type {
 
 type CollectionRef = { [K: string]: Collection<any> }
 
-interface Query<TCtx extends Context<Schema>> extends BaseQuery<TCtx> {
-  collections: {
-    [K: string]: Collection<any>
-  }
-}
-
-export class BaseQueryBuilder<TCtx extends Context<Schema>> {
-  private readonly query: Partial<Query<TCtx>> = {}
+export class BaseQueryBuilder<TContext extends Context<Schema>> {
+  private readonly query: Partial<Query<TContext>> = {}
 
   /**
    * Create a new QueryBuilder instance.
    */
-  constructor(query: Partial<Query<TCtx>> = {}) {
+  constructor(query: Partial<Query<TContext>> = {}) {
     this.query = query
   }
 
@@ -46,7 +40,7 @@ export class BaseQueryBuilder<TCtx extends Context<Schema>> {
     collectionRef: TCollectionRef
   ): QueryBuilder<{
     baseSchema: Flatten<
-      TCtx[`baseSchema`] & {
+      TContext[`baseSchema`] & {
         [K in keyof TCollectionRef & string]: RemoveIndexSignature<
           (TCollectionRef[keyof TCollectionRef] extends Collection<infer T>
             ? T
@@ -68,32 +62,32 @@ export class BaseQueryBuilder<TCtx extends Context<Schema>> {
 
   from<
     T extends InputReference<{
-      baseSchema: TCtx[`baseSchema`]
-      schema: TCtx[`baseSchema`]
+      baseSchema: TContext[`baseSchema`]
+      schema: TContext[`baseSchema`]
     }>,
   >(
     collection: T
   ): QueryBuilder<{
-    baseSchema: TCtx[`baseSchema`]
+    baseSchema: TContext[`baseSchema`]
     schema: {
-      [K in T]: RemoveIndexSignature<TCtx[`baseSchema`][T]>
+      [K in T]: RemoveIndexSignature<TContext[`baseSchema`][T]>
     }
     default: T
   }>
 
   from<
     T extends InputReference<{
-      baseSchema: TCtx[`baseSchema`]
-      schema: TCtx[`baseSchema`]
+      baseSchema: TContext[`baseSchema`]
+      schema: TContext[`baseSchema`]
     }>,
     TAs extends string,
   >(
     collection: T,
     as: TAs
   ): QueryBuilder<{
-    baseSchema: TCtx[`baseSchema`]
+    baseSchema: TContext[`baseSchema`]
     schema: {
-      [K in TAs]: RemoveIndexSignature<TCtx[`baseSchema`][T]>
+      [K in TAs]: RemoveIndexSignature<TContext[`baseSchema`][T]>
     }
     default: TAs
   }>
@@ -109,8 +103,8 @@ export class BaseQueryBuilder<TCtx extends Context<Schema>> {
   from<
     T extends
       | InputReference<{
-          baseSchema: TCtx[`baseSchema`]
-          schema: TCtx[`baseSchema`]
+          baseSchema: TContext[`baseSchema`]
+          schema: TContext[`baseSchema`]
         }>
       | CollectionRef,
     TAs extends string | undefined,
@@ -121,8 +115,8 @@ export class BaseQueryBuilder<TCtx extends Context<Schema>> {
     } else if (typeof collection === `string`) {
       return this.fromInputReference(
         collection as InputReference<{
-          baseSchema: TCtx[`baseSchema`]
-          schema: TCtx[`baseSchema`]
+          baseSchema: TContext[`baseSchema`]
+          schema: TContext[`baseSchema`]
         }>,
         as
       )
@@ -144,12 +138,12 @@ export class BaseQueryBuilder<TCtx extends Context<Schema>> {
 
     const newBuilder = new BaseQueryBuilder()
     Object.assign(newBuilder.query, this.query)
-    newBuilder.query.from = key as From<TCtx>
+    newBuilder.query.from = key as From<TContext>
     newBuilder.query.collections ??= {}
     newBuilder.query.collections[key] = collection
 
     return newBuilder as unknown as QueryBuilder<{
-      baseSchema: TCtx[`baseSchema`] & {
+      baseSchema: TContext[`baseSchema`] & {
         [K in keyof TCollectionRef &
           string]: (TCollectionRef[keyof TCollectionRef] extends Collection<
           infer T
@@ -173,28 +167,28 @@ export class BaseQueryBuilder<TCtx extends Context<Schema>> {
 
   private fromInputReference<
     T extends InputReference<{
-      baseSchema: TCtx[`baseSchema`]
-      schema: TCtx[`baseSchema`]
+      baseSchema: TContext[`baseSchema`]
+      schema: TContext[`baseSchema`]
     }>,
     TAs extends string | undefined,
   >(collection: T, as?: TAs) {
     const newBuilder = new BaseQueryBuilder()
     Object.assign(newBuilder.query, this.query)
-    newBuilder.query.from = collection as From<TCtx>
+    newBuilder.query.from = collection as From<TContext>
     if (as) {
       newBuilder.query.as = as
     }
 
     // Calculate the result type without deep nesting
     type ResultSchema = TAs extends undefined
-      ? { [K in T]: TCtx[`baseSchema`][T] }
-      : { [K in string & TAs]: TCtx[`baseSchema`][T] }
+      ? { [K in T]: TContext[`baseSchema`][T] }
+      : { [K in string & TAs]: TContext[`baseSchema`][T] }
 
     type ResultDefault = TAs extends undefined ? T : string & TAs
 
     // Use simpler type assertion to avoid excessive depth
     return newBuilder as unknown as QueryBuilder<{
-      baseSchema: TCtx[`baseSchema`]
+      baseSchema: TContext[`baseSchema`]
       schema: ResultSchema
       default: ResultDefault
     }>
@@ -207,8 +201,8 @@ export class BaseQueryBuilder<TCtx extends Context<Schema>> {
    * @param selects The columns to select
    * @returns A new QueryBuilder with the select clause set
    */
-  select<TSelects extends Array<Select<TCtx>>>(
-    this: QueryBuilder<TCtx>,
+  select<TSelects extends Array<Select<TContext>>>(
+    this: QueryBuilder<TContext>,
     ...selects: TSelects
   ) {
     // Validate function calls in the selects
@@ -268,15 +262,15 @@ export class BaseQueryBuilder<TCtx extends Context<Schema>> {
       return select
     })
 
-    const newBuilder = new BaseQueryBuilder<TCtx>(
-      (this as BaseQueryBuilder<TCtx>).query
+    const newBuilder = new BaseQueryBuilder<TContext>(
+      (this as BaseQueryBuilder<TContext>).query
     )
-    newBuilder.query.select = validatedSelects as Array<Select<TCtx>>
+    newBuilder.query.select = validatedSelects as Array<Select<TContext>>
 
     return newBuilder as QueryBuilder<
       Flatten<
-        Omit<TCtx, `result`> & {
-          result: InferResultTypeFromSelectTuple<TCtx, TSelects>
+        Omit<TContext, `result`> & {
+          result: InferResultTypeFromSelectTuple<TContext, TSelects>
         }
       >
     >
@@ -286,15 +280,15 @@ export class BaseQueryBuilder<TCtx extends Context<Schema>> {
    * Add a where clause comparing two values.
    */
   where(
-    left: PropertyReferenceString<TCtx> | LiteralValue,
+    left: PropertyReferenceString<TContext> | LiteralValue,
     operator: Comparator,
-    right: PropertyReferenceString<TCtx> | LiteralValue
-  ): QueryBuilder<TCtx>
+    right: PropertyReferenceString<TContext> | LiteralValue
+  ): QueryBuilder<TContext>
 
   /**
    * Add a where clause with a complete condition object.
    */
-  where(condition: Condition<TCtx>): QueryBuilder<TCtx>
+  where(condition: Condition<TContext>): QueryBuilder<TContext>
 
   /**
    * Add a where clause to filter the results.
@@ -305,10 +299,14 @@ export class BaseQueryBuilder<TCtx extends Context<Schema>> {
    * @param right Optional right operand
    * @returns A new QueryBuilder with the where clause added
    */
-  where(leftOrCondition: any, operator?: any, right?: any): QueryBuilder<TCtx> {
+  where(
+    leftOrCondition: any,
+    operator?: any,
+    right?: any
+  ): QueryBuilder<TContext> {
     // Create a new builder with a copy of the current query
     // Use simplistic approach to avoid deep type errors
-    const newBuilder = new BaseQueryBuilder<TCtx>()
+    const newBuilder = new BaseQueryBuilder<TContext>()
     Object.assign(newBuilder.query, this.query)
 
     let condition: any
@@ -331,7 +329,7 @@ export class BaseQueryBuilder<TCtx extends Context<Schema>> {
       newBuilder.query.where = andArray
     }
 
-    return newBuilder as unknown as QueryBuilder<TCtx>
+    return newBuilder as unknown as QueryBuilder<TContext>
   }
 
   /**
@@ -339,16 +337,16 @@ export class BaseQueryBuilder<TCtx extends Context<Schema>> {
    * For filtering results after they have been grouped.
    */
   having(
-    left: PropertyReferenceString<TCtx> | LiteralValue,
+    left: PropertyReferenceString<TContext> | LiteralValue,
     operator: Comparator,
-    right: PropertyReferenceString<TCtx> | LiteralValue
-  ): QueryBuilder<TCtx>
+    right: PropertyReferenceString<TContext> | LiteralValue
+  ): QueryBuilder<TContext>
 
   /**
    * Add a having clause with a complete condition object.
    * For filtering results after they have been grouped.
    */
-  having(condition: Condition<TCtx>): QueryBuilder<TCtx>
+  having(condition: Condition<TContext>): QueryBuilder<TContext>
 
   /**
    * Add a having clause to filter the grouped results.
@@ -363,9 +361,9 @@ export class BaseQueryBuilder<TCtx extends Context<Schema>> {
     leftOrCondition: any,
     operator?: any,
     right?: any
-  ): QueryBuilder<TCtx> {
+  ): QueryBuilder<TContext> {
     // Create a new builder with a copy of the current query
-    const newBuilder = new BaseQueryBuilder<TCtx>()
+    const newBuilder = new BaseQueryBuilder<TContext>()
     Object.assign(newBuilder.query, this.query)
 
     let condition: any
@@ -388,7 +386,7 @@ export class BaseQueryBuilder<TCtx extends Context<Schema>> {
       newBuilder.query.having = andArray
     }
 
-    return newBuilder as QueryBuilder<TCtx>
+    return newBuilder as QueryBuilder<TContext>
   }
 
   /**
@@ -396,9 +394,9 @@ export class BaseQueryBuilder<TCtx extends Context<Schema>> {
    *
    * @returns The built query
    */
-  buildQuery(): Query<TCtx> {
+  buildQuery(): Query<TContext> {
     // Create a copy of the query to avoid exposing the internal state directly
-    return { ...this.query } as Query<TCtx>
+    return { ...this.query } as Query<TContext>
   }
 
   /**
@@ -409,8 +407,8 @@ export class BaseQueryBuilder<TCtx extends Context<Schema>> {
     from: TCollectionRef
     on: Condition<
       Flatten<{
-        baseSchema: TCtx[`baseSchema`]
-        schema: TCtx[`schema`] & {
+        baseSchema: TContext[`baseSchema`]
+        schema: TContext[`schema`] & {
           [K in keyof TCollectionRef & string]: RemoveIndexSignature<
             (TCollectionRef[keyof TCollectionRef] extends Collection<infer T>
               ? T
@@ -422,7 +420,7 @@ export class BaseQueryBuilder<TCtx extends Context<Schema>> {
     >
     where?: Condition<
       Flatten<{
-        baseSchema: TCtx[`baseSchema`]
+        baseSchema: TContext[`baseSchema`]
         schema: {
           [K in keyof TCollectionRef & string]: RemoveIndexSignature<
             (TCollectionRef[keyof TCollectionRef] extends Collection<infer T>
@@ -435,8 +433,8 @@ export class BaseQueryBuilder<TCtx extends Context<Schema>> {
     >
   }): QueryBuilder<
     Flatten<
-      Omit<TCtx, `schema`> & {
-        schema: TCtx[`schema`] & {
+      Omit<TContext, `schema`> & {
+        schema: TContext[`schema`] & {
           [K in keyof TCollectionRef & string]: RemoveIndexSignature<
             (TCollectionRef[keyof TCollectionRef] extends Collection<infer T>
               ? T
@@ -454,31 +452,31 @@ export class BaseQueryBuilder<TCtx extends Context<Schema>> {
    */
   join<
     T extends InputReference<{
-      baseSchema: TCtx[`baseSchema`]
-      schema: TCtx[`baseSchema`]
+      baseSchema: TContext[`baseSchema`]
+      schema: TContext[`baseSchema`]
     }>,
   >(joinClause: {
     type: `inner` | `left` | `right` | `full` | `cross`
     from: T
     on: Condition<
       Flatten<{
-        baseSchema: TCtx[`baseSchema`]
-        schema: TCtx[`schema`] & {
-          [K in T]: RemoveIndexSignature<TCtx[`baseSchema`][T]>
+        baseSchema: TContext[`baseSchema`]
+        schema: TContext[`schema`] & {
+          [K in T]: RemoveIndexSignature<TContext[`baseSchema`][T]>
         }
       }>
     >
     where?: Condition<
       Flatten<{
-        baseSchema: TCtx[`baseSchema`]
-        schema: { [K in T]: RemoveIndexSignature<TCtx[`baseSchema`][T]> }
+        baseSchema: TContext[`baseSchema`]
+        schema: { [K in T]: RemoveIndexSignature<TContext[`baseSchema`][T]> }
       }>
     >
   }): QueryBuilder<
     Flatten<
-      Omit<TCtx, `schema`> & {
-        schema: TCtx[`schema`] & {
-          [K in T]: RemoveIndexSignature<TCtx[`baseSchema`][T]>
+      Omit<TContext, `schema`> & {
+        schema: TContext[`schema`] & {
+          [K in T]: RemoveIndexSignature<TContext[`baseSchema`][T]>
         }
       }
     >
@@ -489,8 +487,8 @@ export class BaseQueryBuilder<TCtx extends Context<Schema>> {
    */
   join<
     TFrom extends InputReference<{
-      baseSchema: TCtx[`baseSchema`]
-      schema: TCtx[`baseSchema`]
+      baseSchema: TContext[`baseSchema`]
+      schema: TContext[`baseSchema`]
     }>,
     TAs extends string,
   >(joinClause: {
@@ -499,23 +497,25 @@ export class BaseQueryBuilder<TCtx extends Context<Schema>> {
     as: TAs
     on: Condition<
       Flatten<{
-        baseSchema: TCtx[`baseSchema`]
-        schema: TCtx[`schema`] & {
-          [K in TAs]: RemoveIndexSignature<TCtx[`baseSchema`][TFrom]>
+        baseSchema: TContext[`baseSchema`]
+        schema: TContext[`schema`] & {
+          [K in TAs]: RemoveIndexSignature<TContext[`baseSchema`][TFrom]>
         }
       }>
     >
     where?: Condition<
       Flatten<{
-        baseSchema: TCtx[`baseSchema`]
-        schema: { [K in TAs]: RemoveIndexSignature<TCtx[`baseSchema`][TFrom]> }
+        baseSchema: TContext[`baseSchema`]
+        schema: {
+          [K in TAs]: RemoveIndexSignature<TContext[`baseSchema`][TFrom]>
+        }
       }>
     >
   }): QueryBuilder<
     Flatten<
-      Omit<TCtx, `schema`> & {
-        schema: TCtx[`schema`] & {
-          [K in TAs]: RemoveIndexSignature<TCtx[`baseSchema`][TFrom]>
+      Omit<TContext, `schema`> & {
+        schema: TContext[`schema`] & {
+          [K in TAs]: RemoveIndexSignature<TContext[`baseSchema`][TFrom]>
         }
       }
     >
@@ -524,8 +524,8 @@ export class BaseQueryBuilder<TCtx extends Context<Schema>> {
   join<
     TFrom extends
       | InputReference<{
-          baseSchema: TCtx[`baseSchema`]
-          schema: TCtx[`baseSchema`]
+          baseSchema: TContext[`baseSchema`]
+          schema: TContext[`baseSchema`]
         }>
       | CollectionRef,
     TAs extends string | undefined = undefined,
@@ -535,8 +535,8 @@ export class BaseQueryBuilder<TCtx extends Context<Schema>> {
     as?: TAs
     on: Condition<
       Flatten<{
-        baseSchema: TCtx[`baseSchema`]
-        schema: TCtx[`schema`] &
+        baseSchema: TContext[`baseSchema`]
+        schema: TContext[`schema`] &
           (TFrom extends CollectionRef
             ? {
                 [K in keyof TFrom & string]: RemoveIndexSignature<
@@ -555,8 +555,8 @@ export class BaseQueryBuilder<TCtx extends Context<Schema>> {
     >
     where?: Condition<
       Flatten<{
-        baseSchema: TCtx[`baseSchema`]
-        schema: TCtx[`schema`] &
+        baseSchema: TContext[`baseSchema`]
+        schema: TContext[`schema`] &
           (TFrom extends CollectionRef
             ? {
                 [K in keyof TFrom & string]: RemoveIndexSignature<
@@ -589,8 +589,8 @@ export class BaseQueryBuilder<TCtx extends Context<Schema>> {
         joinClause as {
           type: `inner` | `left` | `right` | `full` | `cross`
           from: InputReference<{
-            baseSchema: TCtx[`baseSchema`]
-            schema: TCtx[`baseSchema`]
+            baseSchema: TContext[`baseSchema`]
+            schema: TContext[`baseSchema`]
           }>
           as?: TAs
           on: Condition<any>
@@ -607,7 +607,7 @@ export class BaseQueryBuilder<TCtx extends Context<Schema>> {
     where?: Condition<any>
   }): QueryBuilder<any> {
     // Create a new builder with a copy of the current query
-    const newBuilder = new BaseQueryBuilder<TCtx>()
+    const newBuilder = new BaseQueryBuilder<TContext>()
     Object.assign(newBuilder.query, this.query)
 
     // Get the collection key
@@ -627,7 +627,7 @@ export class BaseQueryBuilder<TCtx extends Context<Schema>> {
       from: key,
       on: joinClause.on,
       where: joinClause.where,
-    } as JoinClause<TCtx>
+    } as JoinClause<TContext>
 
     // Add the join clause to the query
     if (!newBuilder.query.join) {
@@ -643,8 +643,8 @@ export class BaseQueryBuilder<TCtx extends Context<Schema>> {
     // Return the new builder with updated schema type
     return newBuilder as QueryBuilder<
       Flatten<
-        Omit<TCtx, `schema`> & {
-          schema: TCtx[`schema`] & {
+        Omit<TContext, `schema`> & {
+          schema: TContext[`schema`] & {
             [K in keyof TCollectionRef & string]: RemoveIndexSignature<
               (TCollectionRef[keyof TCollectionRef] extends Collection<infer T>
                 ? T
@@ -659,8 +659,8 @@ export class BaseQueryBuilder<TCtx extends Context<Schema>> {
 
   private joinInputReference<
     TFrom extends InputReference<{
-      baseSchema: TCtx[`baseSchema`]
-      schema: TCtx[`baseSchema`]
+      baseSchema: TContext[`baseSchema`]
+      schema: TContext[`baseSchema`]
     }>,
     TAs extends string | undefined = undefined,
   >(joinClause: {
@@ -671,11 +671,11 @@ export class BaseQueryBuilder<TCtx extends Context<Schema>> {
     where?: Condition<any>
   }): QueryBuilder<any> {
     // Create a new builder with a copy of the current query
-    const newBuilder = new BaseQueryBuilder<TCtx>()
+    const newBuilder = new BaseQueryBuilder<TContext>()
     Object.assign(newBuilder.query, this.query)
 
     // Create a copy of the join clause for the query
-    const joinClauseCopy = { ...joinClause } as JoinClause<TCtx>
+    const joinClauseCopy = { ...joinClause } as JoinClause<TContext>
 
     // Add the join clause to the query
     if (!newBuilder.query.join) {
@@ -690,9 +690,9 @@ export class BaseQueryBuilder<TCtx extends Context<Schema>> {
     // Return the new builder with updated schema type
     return newBuilder as QueryBuilder<
       Flatten<
-        Omit<TCtx, `schema`> & {
-          schema: TCtx[`schema`] & {
-            [K in typeof _effectiveAlias]: TCtx[`baseSchema`][TFrom]
+        Omit<TContext, `schema`> & {
+          schema: TContext[`schema`] & {
+            [K in typeof _effectiveAlias]: TContext[`baseSchema`][TFrom]
           }
         }
       >
@@ -706,15 +706,15 @@ export class BaseQueryBuilder<TCtx extends Context<Schema>> {
    * @param orderBy The order specification
    * @returns A new QueryBuilder with the orderBy clause set
    */
-  orderBy(orderBy: OrderBy<TCtx>): QueryBuilder<TCtx> {
+  orderBy(orderBy: OrderBy<TContext>): QueryBuilder<TContext> {
     // Create a new builder with a copy of the current query
-    const newBuilder = new BaseQueryBuilder<TCtx>()
+    const newBuilder = new BaseQueryBuilder<TContext>()
     Object.assign(newBuilder.query, this.query)
 
     // Set the orderBy clause
     newBuilder.query.orderBy = orderBy
 
-    return newBuilder as QueryBuilder<TCtx>
+    return newBuilder as QueryBuilder<TContext>
   }
 
   /**
@@ -723,15 +723,15 @@ export class BaseQueryBuilder<TCtx extends Context<Schema>> {
    * @param limit Maximum number of results to return
    * @returns A new QueryBuilder with the limit set
    */
-  limit(limit: Limit<TCtx>): QueryBuilder<TCtx> {
+  limit(limit: Limit<TContext>): QueryBuilder<TContext> {
     // Create a new builder with a copy of the current query
-    const newBuilder = new BaseQueryBuilder<TCtx>()
+    const newBuilder = new BaseQueryBuilder<TContext>()
     Object.assign(newBuilder.query, this.query)
 
     // Set the limit
     newBuilder.query.limit = limit
 
-    return newBuilder as QueryBuilder<TCtx>
+    return newBuilder as QueryBuilder<TContext>
   }
 
   /**
@@ -740,15 +740,15 @@ export class BaseQueryBuilder<TCtx extends Context<Schema>> {
    * @param offset Number of results to skip
    * @returns A new QueryBuilder with the offset set
    */
-  offset(offset: Offset<TCtx>): QueryBuilder<TCtx> {
+  offset(offset: Offset<TContext>): QueryBuilder<TContext> {
     // Create a new builder with a copy of the current query
-    const newBuilder = new BaseQueryBuilder<TCtx>()
+    const newBuilder = new BaseQueryBuilder<TContext>()
     Object.assign(newBuilder.query, this.query)
 
     // Set the offset
     newBuilder.query.offset = offset
 
-    return newBuilder as QueryBuilder<TCtx>
+    return newBuilder as QueryBuilder<TContext>
   }
 
   /**
@@ -758,16 +758,16 @@ export class BaseQueryBuilder<TCtx extends Context<Schema>> {
    * @returns A new QueryBuilder with the keyBy clause set
    */
   keyBy(
-    keyBy: PropertyReference<TCtx> | Array<PropertyReference<TCtx>>
-  ): QueryBuilder<TCtx> {
+    keyBy: PropertyReference<TContext> | Array<PropertyReference<TContext>>
+  ): QueryBuilder<TContext> {
     // Create a new builder with a copy of the current query
-    const newBuilder = new BaseQueryBuilder<TCtx>()
+    const newBuilder = new BaseQueryBuilder<TContext>()
     Object.assign(newBuilder.query, this.query)
 
     // Set the keyBy clause
     newBuilder.query.keyBy = keyBy
 
-    return newBuilder as QueryBuilder<TCtx>
+    return newBuilder as QueryBuilder<TContext>
   }
 
   /**
@@ -777,16 +777,16 @@ export class BaseQueryBuilder<TCtx extends Context<Schema>> {
    * @returns A new QueryBuilder with the groupBy clause set
    */
   groupBy(
-    groupBy: PropertyReference<TCtx> | Array<PropertyReference<TCtx>>
-  ): QueryBuilder<TCtx> {
+    groupBy: PropertyReference<TContext> | Array<PropertyReference<TContext>>
+  ): QueryBuilder<TContext> {
     // Create a new builder with a copy of the current query
-    const newBuilder = new BaseQueryBuilder<TCtx>()
+    const newBuilder = new BaseQueryBuilder<TContext>()
     Object.assign(newBuilder.query, this.query)
 
     // Set the groupBy clause
     newBuilder.query.groupBy = groupBy
 
-    return newBuilder as QueryBuilder<TCtx>
+    return newBuilder as QueryBuilder<TContext>
   }
 
   /**
@@ -801,28 +801,28 @@ export class BaseQueryBuilder<TCtx extends Context<Schema>> {
     name: TName,
     queryBuilderCallback: (
       builder: InitialQueryBuilder<{
-        baseSchema: TCtx[`baseSchema`]
+        baseSchema: TContext[`baseSchema`]
         schema: {}
       }>
     ) => QueryBuilder<any>
   ): InitialQueryBuilder<{
-    baseSchema: TCtx[`baseSchema`] & { [K in TName]: TResult }
-    schema: TCtx[`schema`]
+    baseSchema: TContext[`baseSchema`] & { [K in TName]: TResult }
+    schema: TContext[`schema`]
   }> {
     // Create a new builder with a copy of the current query
-    const newBuilder = new BaseQueryBuilder<TCtx>()
+    const newBuilder = new BaseQueryBuilder<TContext>()
     Object.assign(newBuilder.query, this.query)
 
     // Create a new builder for the CTE
     const cteBuilder = new BaseQueryBuilder<{
-      baseSchema: TCtx[`baseSchema`]
+      baseSchema: TContext[`baseSchema`]
       schema: {}
     }>()
 
     // Get the CTE query from the callback
     const cteQueryBuilder = queryBuilderCallback(
       cteBuilder as InitialQueryBuilder<{
-        baseSchema: TCtx[`baseSchema`]
+        baseSchema: TContext[`baseSchema`]
         schema: {}
       }>
     )
@@ -845,19 +845,19 @@ export class BaseQueryBuilder<TCtx extends Context<Schema>> {
 
     // Use a type cast that simplifies the type structure to avoid recursion
     return newBuilder as unknown as InitialQueryBuilder<{
-      baseSchema: TCtx[`baseSchema`] & { [K in TName]: TResult }
-      schema: TCtx[`schema`]
+      baseSchema: TContext[`baseSchema`] & { [K in TName]: TResult }
+      schema: TContext[`schema`]
     }>
   }
 }
 
-type InitialQueryBuilder<TCtx extends Context<Schema>> = Pick<
-  BaseQueryBuilder<TCtx>,
+type InitialQueryBuilder<TContext extends Context<Schema>> = Pick<
+  BaseQueryBuilder<TContext>,
   `from` | `with`
 >
 
-type QueryBuilder<TCtx extends Context<Schema>> = Omit<
-  BaseQueryBuilder<TCtx>,
+type QueryBuilder<TContext extends Context<Schema>> = Omit<
+  BaseQueryBuilder<TContext>,
   `from`
 >
 
