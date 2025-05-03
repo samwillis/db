@@ -1,5 +1,4 @@
 import { describe, expect, it, vi } from "vitest"
-import "fake-indexeddb/auto"
 import mitt from "mitt"
 import { Collection } from "../src/collection"
 import type {
@@ -348,17 +347,44 @@ describe(`Collection.subscribeChanges`, () => {
         changes: { value: `synced value` },
       },
     ])
+
+    // Wait for changes to propagate
     await waitForChanges()
 
     // Verify synced insert was emitted
     expect(callback).toHaveBeenCalledTimes(1)
+    expect(callback.mock.calls[0]![0]).toEqual([
+      {
+        type: `insert`,
+        key: `syncedItem`,
+        value: { value: `synced value` },
+      },
+    ])
     callback.mockReset()
 
     // Now add an optimistic item
     collection.insert({ value: `optimistic value` }, { key: `optimisticItem` })
 
-    // Verify optimistic insert was emitted
+    // Verify optimistic insert was emitted - this is the synchronous optimistic update
+    // and so we don't await here
     expect(callback).toHaveBeenCalledTimes(1)
+    expect(callback.mock.calls[0]![0]).toEqual([
+      {
+        type: `insert`,
+        key: `optimisticItem`,
+        value: { value: `optimistic value` },
+      },
+    ])
+    callback.mockReset()
+
+    // Wait for update to sync back
+    await waitForChanges()
+
+    // Verify synced update was emitted
+    expect(callback).toHaveBeenCalledTimes(2)
+    // This is called 3 times:
+    // 1. Set transaction state to persisting
+    // 2. The sync operation arrives and is applied to the state
     callback.mockReset()
 
     // Update both items in optimistic and synced ways
@@ -386,6 +412,16 @@ describe(`Collection.subscribeChanges`, () => {
         },
       },
     ])
+    callback.mockReset()
+
+    // Wait for changes to propagate
+    await waitForChanges()
+
+    // Verify synced update was emitted
+    expect(callback).toHaveBeenCalledTimes(2)
+    // This is called 3 times:
+    // 1. Set transaction state to persisting
+    // 2. The sync operation arrives and is applied to the state
     callback.mockReset()
 
     // Then update the synced item with a synced update
@@ -492,6 +528,16 @@ describe(`Collection.subscribeChanges`, () => {
     expect(batchChanges.every((change) => change.type === `insert`)).toBe(true)
 
     // Reset mock
+    callback.mockReset()
+
+    // Wait for changes to propagate
+    await waitForChanges()
+
+    // Verify synced update was emitted
+    expect(callback).toHaveBeenCalledTimes(2)
+    // This is called 3 times:
+    // 1. Set transaction state to persisting
+    // 2. The sync operation arrives and is applied to the state
     callback.mockReset()
 
     // Update one item only

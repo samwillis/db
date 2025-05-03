@@ -281,7 +281,10 @@ export class Collection<T extends object = Record<string, unknown>> {
       }) => {
         const prevDerivedState = prevDepVals?.[0] ?? new Map<string, T>()
         const changedKeys = new Set(this.syncedKeys)
-        optimisticOperations.flat().forEach((op) => changedKeys.add(op.key))
+        optimisticOperations
+          .flat()
+          .filter((op) => op.isActive)
+          .forEach((op) => changedKeys.add(op.key))
 
         if (changedKeys.size === 0) {
           return []
@@ -298,18 +301,12 @@ export class Collection<T extends object = Record<string, unknown>> {
           } else if (!prevDerivedState.has(key) && derivedState.has(key)) {
             changes.push({ type: `insert`, key, value: derivedState.get(key)! })
           } else if (prevDerivedState.has(key) && derivedState.has(key)) {
-            // TODO: Remove this check below, there is a bug in the transaction manager
-            // that results in multiple emissions during an insert, this is a hacky fix.
-            const prevValue = JSON.stringify(prevDerivedState.get(key))
-            const newValue = JSON.stringify(derivedState.get(key))
-            if (prevValue !== newValue) {
-              changes.push({
-                type: `update`,
-                key,
-                value: derivedState.get(key)!,
-                previousValue: prevDerivedState.get(key),
-              })
-            }
+            changes.push({
+              type: `update`,
+              key,
+              value: derivedState.get(key)!,
+              previousValue: prevDerivedState.get(key),
+            })
           }
         }
 
