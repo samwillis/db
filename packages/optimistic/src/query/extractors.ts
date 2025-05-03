@@ -1,5 +1,5 @@
-import { ConditionOperand, AllowedFunctionName } from "./schema.js"
 import { evaluateFunction, isFunctionCall } from "./functions.js"
+import type { AllowedFunctionName, ConditionOperand } from "./schema.js"
 
 /**
  * Extracts a value from a nested row structure
@@ -16,8 +16,8 @@ export function extractValueFromNestedRow(
   joinedTableAlias?: string
 ): unknown {
   // Check if it's a table.column reference
-  if (columnRef.includes(".")) {
-    const [tableAlias, colName] = columnRef.split(".") as [string, string]
+  if (columnRef.includes(`.`)) {
+    const [tableAlias, colName] = columnRef.split(`.`) as [string, string]
 
     // Get the table data
     const tableData = nestedRow[tableAlias] as
@@ -38,7 +38,7 @@ export function extractValueFromNestedRow(
       const mainTableData = nestedRow[mainTableAlias] as Record<string, unknown>
       if (
         mainTableData &&
-        typeof mainTableData === "object" &&
+        typeof mainTableData === `object` &&
         columnRef in mainTableData
       ) {
         return mainTableData[columnRef]
@@ -53,7 +53,7 @@ export function extractValueFromNestedRow(
       >
       if (
         joinedTableData &&
-        typeof joinedTableData === "object" &&
+        typeof joinedTableData === `object` &&
         columnRef in joinedTableData
       ) {
         return joinedTableData[columnRef]
@@ -64,7 +64,7 @@ export function extractValueFromNestedRow(
     for (const [_tableAlias, tableData] of Object.entries(nestedRow)) {
       if (
         tableData &&
-        typeof tableData === "object" &&
+        typeof tableData === `object` &&
         columnRef in (tableData as Record<string, unknown>)
       ) {
         return (tableData as Record<string, unknown>)[columnRef]
@@ -84,7 +84,7 @@ export function evaluateOperandOnNestedRow(
   joinedTableAlias?: string
 ): unknown {
   // Handle column references
-  if (typeof operand === "string" && operand.startsWith("@")) {
+  if (typeof operand === `string` && operand.startsWith(`@`)) {
     const columnRef = operand.substring(1)
     return extractValueFromNestedRow(
       nestedRow,
@@ -95,10 +95,10 @@ export function evaluateOperandOnNestedRow(
   }
 
   // Handle explicit column references
-  if (operand && typeof operand === "object" && "col" in operand) {
+  if (operand && typeof operand === `object` && `col` in operand) {
     const colRef = (operand as { col: unknown }).col
 
-    if (typeof colRef === "string") {
+    if (typeof colRef === `string`) {
       // First try to extract from nested row structure
       const nestedValue = extractValueFromNestedRow(
         nestedRow,
@@ -120,7 +120,7 @@ export function evaluateOperandOnNestedRow(
   }
 
   // Handle function calls
-  if (operand && typeof operand === "object" && isFunctionCall(operand)) {
+  if (operand && typeof operand === `object` && isFunctionCall(operand)) {
     // Get the function name (the only key in the object)
     const functionName = Object.keys(operand)[0] as AllowedFunctionName
     // Get the arguments using type assertion with specific function name
@@ -146,12 +146,12 @@ export function evaluateOperandOnNestedRow(
     // Call the function with the evaluated arguments
     return evaluateFunction(
       functionName,
-      evaluatedArgs as ConditionOperand | ConditionOperand[]
+      evaluatedArgs as ConditionOperand | Array<ConditionOperand>
     )
   }
 
   // Handle explicit literals
-  if (operand && typeof operand === "object" && "value" in operand) {
+  if (operand && typeof operand === `object` && `value` in operand) {
     return (operand as { value: unknown }).value
   }
 
@@ -174,12 +174,12 @@ export function extractJoinKey<T extends Record<string, unknown>>(
   let keyValue: unknown
 
   // Handle column references (e.g., "@orders.id" or "@id")
-  if (typeof operand === "string" && operand.startsWith("@")) {
+  if (typeof operand === `string` && operand.startsWith(`@`)) {
     const columnRef = operand.substring(1)
 
     // If it contains a dot, extract the table and column
-    if (columnRef.includes(".")) {
-      const [tableAlias, colName] = columnRef.split(".") as [string, string]
+    if (columnRef.includes(`.`)) {
+      const [tableAlias, colName] = columnRef.split(`.`) as [string, string]
       // If this is referencing the current table, extract from row directly
       if (tableAlias === defaultTableAlias) {
         keyValue = row[colName]
@@ -191,13 +191,13 @@ export function extractJoinKey<T extends Record<string, unknown>>(
       // No table specified, look directly in the row
       keyValue = row[columnRef]
     }
-  } else if (operand && typeof operand === "object" && "col" in operand) {
+  } else if (operand && typeof operand === `object` && `col` in operand) {
     // Handle explicit column references like { col: "orders.id" } or { col: "id" }
     const colRef = (operand as { col: unknown }).col
 
-    if (typeof colRef === "string") {
-      if (colRef.includes(".")) {
-        const [tableAlias, colName] = colRef.split(".") as [string, string]
+    if (typeof colRef === `string`) {
+      if (colRef.includes(`.`)) {
+        const [tableAlias, colName] = colRef.split(`.`) as [string, string]
         // If this is referencing the current table, extract from row directly
         if (tableAlias === defaultTableAlias) {
           keyValue = row[colName]

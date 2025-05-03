@@ -1,16 +1,17 @@
-import { describe, it, expect } from "vitest"
+import { describe, expect, it } from "vitest"
 import {
+  Antichain,
   D2,
   MessageType,
+  MultiSet,
   output,
   v,
-  Antichain,
-  MultiSet,
-  Message,
 } from "@electric-sql/d2ts"
-import { Query, Condition, compileQuery } from "../../src/query/index.js"
+import { compileQuery } from "../../src/query/index.js"
+import type { Message } from "@electric-sql/d2ts"
+import type { Condition, Query } from "../../src/query/index.js"
 
-describe("Query - HAVING Clause", () => {
+describe(`Query - HAVING Clause`, () => {
   // Define a sample data type for our tests
   type Product = {
     id: number
@@ -19,7 +20,7 @@ describe("Query - HAVING Clause", () => {
     category: string
     inStock: boolean
     rating: number
-    tags: string[]
+    tags: Array<string>
     discount?: number
   }
 
@@ -33,84 +34,84 @@ describe("Query - HAVING Clause", () => {
   }
 
   // Sample products for testing
-  const sampleProducts: Product[] = [
+  const sampleProducts: Array<Product> = [
     {
       id: 1,
-      name: "Laptop",
+      name: `Laptop`,
       price: 1200,
-      category: "Electronics",
+      category: `Electronics`,
       inStock: true,
       rating: 4.5,
-      tags: ["tech", "device"],
+      tags: [`tech`, `device`],
     },
     {
       id: 2,
-      name: "Smartphone",
+      name: `Smartphone`,
       price: 800,
-      category: "Electronics",
+      category: `Electronics`,
       inStock: true,
       rating: 4.2,
-      tags: ["tech", "mobile"],
+      tags: [`tech`, `mobile`],
     },
     {
       id: 3,
-      name: "Desk",
+      name: `Desk`,
       price: 350,
-      category: "Furniture",
+      category: `Furniture`,
       inStock: false,
       rating: 3.8,
-      tags: ["home", "office"],
+      tags: [`home`, `office`],
     },
     {
       id: 4,
-      name: "Book",
+      name: `Book`,
       price: 25,
-      category: "Books",
+      category: `Books`,
       inStock: true,
       rating: 4.7,
-      tags: ["education", "reading"],
+      tags: [`education`, `reading`],
     },
     {
       id: 5,
-      name: "Monitor",
+      name: `Monitor`,
       price: 300,
-      category: "Electronics",
+      category: `Electronics`,
       inStock: true,
       rating: 4.0,
-      tags: ["tech", "display"],
+      tags: [`tech`, `display`],
     },
     {
       id: 6,
-      name: "Chair",
+      name: `Chair`,
       price: 150,
-      category: "Furniture",
+      category: `Furniture`,
       inStock: true,
       rating: 3.5,
-      tags: ["home", "comfort"],
+      tags: [`home`, `comfort`],
     },
     {
       id: 7,
-      name: "Tablet",
+      name: `Tablet`,
       price: 500,
-      category: "Electronics",
+      category: `Electronics`,
       inStock: false,
       rating: 4.3,
-      tags: ["tech", "mobile"],
+      tags: [`tech`, `mobile`],
     },
   ]
 
-  it("should filter products with HAVING clause", () => {
+  it(`should filter products with HAVING clause`, () => {
     const query: Query<Context> = {
-      select: ["@id", "@name", "@price", "@category"],
-      from: "products",
-      having: ["@price", ">", 300] as Condition,
+      select: [`@id`, `@name`, `@price`, `@category`],
+      from: `products`,
+      having: [`@price`, `>`, 300] as Condition,
     }
 
     const graph = new D2({ initialFrontier: v([0, 0]) })
     const input = graph.newInput<Product>()
     const pipeline = compileQuery(query, { [query.from]: input })
 
-    const messages: Message<any>[] = []
+    const messages: Array<Message<any>> = []
     pipeline.pipe(
       output((message) => {
         messages.push(message)
@@ -141,20 +142,20 @@ describe("Query - HAVING Clause", () => {
     expect(results.map((p) => p.id)).toContain(3) // Desk
   })
 
-  it("should apply WHERE and HAVING in sequence", () => {
+  it(`should apply WHERE and HAVING in sequence`, () => {
     // Query to find in-stock products with price > 200
     const query: Query<Context> = {
-      select: ["@id", "@name", "@price", "@category", "@inStock"],
-      from: "products",
-      where: ["@inStock", "=", true] as Condition,
-      having: ["@price", ">", 200] as Condition,
+      select: [`@id`, `@name`, `@price`, `@category`, `@inStock`],
+      from: `products`,
+      where: [`@inStock`, `=`, true] as Condition,
+      having: [`@price`, `>`, 200] as Condition,
     }
 
     const graph = new D2({ initialFrontier: v([0, 0]) })
     const input = graph.newInput<Product>()
     const pipeline = compileQuery(query, { [query.from]: input })
 
-    const messages: Message<any>[] = []
+    const messages: Array<Message<any>> = []
     pipeline.pipe(
       output((message) => {
         messages.push(message)
@@ -185,17 +186,17 @@ describe("Query - HAVING Clause", () => {
     expect(results.map((p) => p.id)).toContain(5) // Monitor
   })
 
-  it("should support complex conditions in HAVING", () => {
+  it(`should support complex conditions in HAVING`, () => {
     // Query with complex HAVING condition
     const query: Query<Context> = {
-      select: ["@id", "@name", "@price", "@category", "@rating"],
-      from: "products",
+      select: [`@id`, `@name`, `@price`, `@category`, `@rating`],
+      from: `products`,
       having: [
-        ["@price", ">", 100],
-        "and",
-        ["@price", "<", 600],
-        "and",
-        ["@rating", ">=", 4.0],
+        [`@price`, `>`, 100],
+        `and`,
+        [`@price`, `<`, 600],
+        `and`,
+        [`@rating`, `>=`, 4.0],
       ] as unknown as Condition,
     }
 
@@ -203,7 +204,7 @@ describe("Query - HAVING Clause", () => {
     const input = graph.newInput<Product>()
     const pipeline = compileQuery(query, { [query.from]: input })
 
-    const messages: Message<any>[] = []
+    const messages: Array<Message<any>> = []
     pipeline.pipe(
       output((message) => {
         messages.push(message)
@@ -241,15 +242,15 @@ describe("Query - HAVING Clause", () => {
     })
   })
 
-  it("should support nested conditions in HAVING", () => {
+  it(`should support nested conditions in HAVING`, () => {
     // Query with nested HAVING condition
     const query: Query<Context> = {
-      select: ["@id", "@name", "@price", "@category", "@inStock"],
-      from: "products",
+      select: [`@id`, `@name`, `@price`, `@category`, `@inStock`],
+      from: `products`,
       having: [
-        [["@category", "=", "Electronics"], "and", ["@price", "<", 600]],
-        "or",
-        [["@category", "=", "Furniture"], "and", ["@inStock", "=", true]],
+        [[`@category`, `=`, `Electronics`], `and`, [`@price`, `<`, 600]],
+        `or`,
+        [[`@category`, `=`, `Furniture`], `and`, [`@inStock`, `=`, true]],
       ] as unknown as Condition,
     }
 
@@ -257,7 +258,7 @@ describe("Query - HAVING Clause", () => {
     const input = graph.newInput<Product>()
     const pipeline = compileQuery(query, { [query.from]: input })
 
-    const messages: Message<any>[] = []
+    const messages: Array<Message<any>> = []
     pipeline.pipe(
       output((message) => {
         messages.push(message)
@@ -293,9 +294,9 @@ describe("Query - HAVING Clause", () => {
     results.forEach((product) => {
       // Check if it matches either condition
       const matchesCondition1 =
-        product.category === "Electronics" && product.price < 600
+        product.category === `Electronics` && product.price < 600
       const matchesCondition2 =
-        product.category === "Furniture" && product.inStock === true
+        product.category === `Furniture` && product.inStock === true
       expect(matchesCondition1 || matchesCondition2).toBeTruthy()
     })
   })

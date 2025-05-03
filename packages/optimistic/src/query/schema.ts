@@ -1,9 +1,9 @@
 import type {
   Context,
   InputReference,
-  WildcardReferenceString,
   PropertyReference,
   PropertyReferenceString,
+  WildcardReferenceString,
 } from "./types.js"
 
 // Identifires
@@ -16,7 +16,7 @@ export type JSONLike =
   | boolean
   | Date
   | null
-  | JSONLike[]
+  | Array<JSONLike>
   | { [key: string]: JSONLike }
 
 // LiteralValue supports common primitives, JS Date, or undefined.
@@ -51,35 +51,35 @@ export interface ExplicitLiteral {
 
 // Allowed function names (common SQL functions)
 export type AllowedFunctionName =
-  | "DATE"
-  | "JSON_EXTRACT"
-  | "JSON_EXTRACT_PATH"
-  | "UPPER"
-  | "LOWER"
-  | "COALESCE"
-  | "CONCAT"
-  | "LENGTH"
-  | "ORDER_INDEX"
+  | `DATE`
+  | `JSON_EXTRACT`
+  | `JSON_EXTRACT_PATH`
+  | `UPPER`
+  | `LOWER`
+  | `COALESCE`
+  | `CONCAT`
+  | `LENGTH`
+  | `ORDER_INDEX`
 
 // A function call is represented as a union of objects—each having exactly one key that is one of the allowed function names.
 export type FunctionCall<C extends Context = Context> = {
   [K in AllowedFunctionName]: {
-    [key in K]: ConditionOperand<C> | ConditionOperand<C>[]
+    [key in K]: ConditionOperand<C> | Array<ConditionOperand<C>>
   }
 }[AllowedFunctionName]
 
 export type AggregateFunctionName =
-  | "SUM"
-  | "COUNT"
-  | "AVG"
-  | "MIN"
-  | "MAX"
-  | "MEDIAN"
-  | "MODE"
+  | `SUM`
+  | `COUNT`
+  | `AVG`
+  | `MIN`
+  | `MAX`
+  | `MEDIAN`
+  | `MODE`
 
 export type AggregateFunctionCall<C extends Context = Context> = {
   [K in AggregateFunctionName]: {
-    [key in K]: ConditionOperand<C> | ConditionOperand<C>[]
+    [key in K]: ConditionOperand<C> | Array<ConditionOperand<C>>
   }
 }[AggregateFunctionName]
 
@@ -99,25 +99,25 @@ export type ConditionOperand<
   | PropertyReference<C>
   | ExplicitLiteral
   | FunctionCall<C>
-  | ConditionOperand<C, T>[]
+  | Array<ConditionOperand<C, T>>
 
 // Allowed SQL comparators.
 export type Comparator =
-  | "="
-  | "!="
-  | "<"
-  | "<="
-  | ">"
-  | ">="
-  | "like"
-  | "not like"
-  | "in"
-  | "not in"
-  | "is"
-  | "is not"
+  | `=`
+  | `!=`
+  | `<`
+  | `<=`
+  | `>`
+  | `>=`
+  | `like`
+  | `not like`
+  | `in`
+  | `not in`
+  | `is`
+  | `is not`
 
 // Logical operators.
-export type LogicalOperator = "and" | "or"
+export type LogicalOperator = `and` | `or`
 
 // A simple condition is a tuple: [left operand, comparator, right operand].
 export type SimpleCondition<
@@ -134,7 +134,7 @@ export type FlatCompositeCondition<
   ConditionOperand<C, T>,
   Comparator,
   ConditionOperand<C, T>,
-  ...(LogicalOperator | ConditionOperand<C, T> | Comparator)[],
+  ...Array<LogicalOperator | ConditionOperand<C, T> | Comparator>,
 ]
 
 // A nested composite condition combines conditions with logical operators
@@ -145,7 +145,9 @@ export type NestedCompositeCondition<
   T extends any = any,
 > = [
   SimpleCondition<C, T> | FlatCompositeCondition<C, T>,
-  ...(LogicalOperator | SimpleCondition<C, T> | FlatCompositeCondition<C, T>)[],
+  ...Array<
+    LogicalOperator | SimpleCondition<C, T> | FlatCompositeCondition<C, T>
+  >,
 ]
 
 // A condition is either a simple condition or a composite condition (flat or nested).
@@ -157,7 +159,7 @@ export type Condition<C extends Context = Context, T extends any = any> =
 // A join clause includes a join type, the table to join, an optional alias,
 // an "on" condition, and an optional "where" clause specific to the join.
 export interface JoinClause<C extends Context = Context> {
-  type: "inner" | "left" | "right" | "full" | "cross"
+  type: `inner` | `left` | `right` | `full` | `cross`
   from: string
   as?: string
   on: Condition<C>
@@ -168,11 +170,11 @@ export interface JoinClause<C extends Context = Context> {
 // or an array of such items.
 export type OrderBy<C extends Context = Context> =
   | PropertyReferenceString<C>
-  | { [column in PropertyReferenceString<C>]?: "asc" | "desc" }
-  | Record<PropertyReferenceString<C>, "asc" | "desc">
+  | { [column in PropertyReferenceString<C>]?: `asc` | `desc` }
+  | Record<PropertyReferenceString<C>, `asc` | `desc`>
   | Array<
       | PropertyReferenceString<C>
-      | { [column in PropertyReferenceString<C>]?: "asc" | "desc" }
+      | { [column in PropertyReferenceString<C>]?: `asc` | `desc` }
     >
 
 export type Select<C extends Context = Context> =
@@ -188,15 +190,15 @@ export type Select<C extends Context = Context> =
 export type As<_C extends Context = Context> = string
 
 export type From<C extends Context = Context> = InputReference<{
-  baseSchema: C["baseSchema"]
-  schema: C["baseSchema"]
+  baseSchema: C[`baseSchema`]
+  schema: C[`baseSchema`]
 }>
 
 export type Where<C extends Context = Context> = Condition<C>
 
 export type GroupBy<C extends Context = Context> =
   | PropertyReference<C>
-  | PropertyReference<C>[]
+  | Array<PropertyReference<C>>
 
 export type Having<C extends Context = Context> = Condition<C>
 
@@ -209,10 +211,10 @@ export interface BaseQuery<C extends Context = Context> {
   // to expressions. Plain strings starting with "@" denote column references.
   // Plain string "@*" denotes all columns from all tables.
   // Plain string "@table.*" denotes all columns from a specific table.
-  select: Select<C>[]
+  select: Array<Select<C>>
   as?: As<C>
   from: From<C>
-  join?: JoinClause<C>[]
+  join?: Array<JoinClause<C>>
   where?: Condition<C>
   groupBy?: GroupBy<C>
   having?: Condition<C>
@@ -223,8 +225,8 @@ export interface BaseQuery<C extends Context = Context> {
 
 // The top-level query interface.
 export interface Query<C extends Context = Context> extends BaseQuery<C> {
-  keyBy?: PropertyReference<C> | PropertyReference<C>[]
-  with?: WithQuery<C>[]
+  keyBy?: PropertyReference<C> | Array<PropertyReference<C>>
+  with?: Array<WithQuery<C>>
 }
 
 // A WithQuery is a query that is used as a Common Table Expression (CTE)
@@ -237,5 +239,5 @@ export interface WithQuery<C extends Context = Context> extends BaseQuery<C> {
 // A keyed query is a query that has a keyBy clause, and so the result is always
 // a keyed stream.
 export interface KeyedQuery<C extends Context = Context> extends Query<C> {
-  keyBy: PropertyReference<C> | PropertyReference<C>[]
+  keyBy: PropertyReference<C> | Array<PropertyReference<C>>
 }

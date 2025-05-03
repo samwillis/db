@@ -1,6 +1,6 @@
-import { describe, it, expect } from "vitest"
+import { describe, expect, it } from "vitest"
 import { queryBuilder } from "../../../src/query/query-builder.js"
-import { Schema, Input } from "../../../src/query/types.js"
+import type { Input, Schema } from "../../../src/query/types.js"
 
 // Test schema
 interface Employee extends Input {
@@ -21,32 +21,32 @@ interface TestSchema extends Schema {
   departments: Department
 }
 
-describe("QueryBuilder.from", () => {
-  it("sets the from clause correctly", () => {
-    const query = queryBuilder<TestSchema>().from("employees")
+describe(`QueryBuilder.from`, () => {
+  it(`sets the from clause correctly`, () => {
+    const query = queryBuilder<TestSchema>().from(`employees`)
     const builtQuery = query.buildQuery()
 
-    expect(builtQuery.from).toBe("employees")
+    expect(builtQuery.from).toBe(`employees`)
     expect(builtQuery.as).toBeUndefined()
   })
 
-  it("sets the from clause with an alias", () => {
-    const query = queryBuilder<TestSchema>().from("employees", "e")
+  it(`sets the from clause with an alias`, () => {
+    const query = queryBuilder<TestSchema>().from(`employees`, `e`)
     const builtQuery = query.buildQuery()
 
-    expect(builtQuery.from).toBe("employees")
-    expect(builtQuery.as).toBe("e")
+    expect(builtQuery.from).toBe(`employees`)
+    expect(builtQuery.as).toBe(`e`)
   })
 
-  it("allows chaining other methods after from", () => {
+  it(`allows chaining other methods after from`, () => {
     const query = queryBuilder<TestSchema>()
-      .from("employees")
-      .where("@id", "=", 1)
-      .select("@id", "@name")
+      .from(`employees`)
+      .where(`@id`, `=`, 1)
+      .select(`@id`, `@name`)
 
     const builtQuery = query.buildQuery()
 
-    expect(builtQuery.from).toBe("employees")
+    expect(builtQuery.from).toBe(`employees`)
     expect(builtQuery.where).toBeDefined()
     expect(builtQuery.select).toHaveLength(2)
   })

@@ -1,8 +1,8 @@
 import type {
+  ConditionOperand,
+  ExplicitLiteral,
   FunctionCall,
   LiteralValue,
-  ExplicitLiteral,
-  ConditionOperand,
   Select,
 } from "./schema.js"
 
@@ -63,8 +63,8 @@ type QualifiedReferencesOfSchemaString<S extends Schema> =
 
 type QualifiedReferenceString<C extends Context<Schema>> =
   QualifiedReferencesOfSchemaString<
-    C["schema"]
-  >[keyof QualifiedReferencesOfSchemaString<C["schema"]>]
+    C[`schema`]
+  >[keyof QualifiedReferencesOfSchemaString<C[`schema`]>]
 
 // Fully qualified references like { col: '@employees.id' }
 type QualifiedReferencesOfSchemaObject<S extends Schema> =
@@ -78,8 +78,8 @@ type QualifiedReferencesOfSchemaObject<S extends Schema> =
 
 type QualifiedReferenceObject<C extends Context<Schema>> =
   QualifiedReferencesOfSchemaObject<
-    C["schema"]
-  >[keyof QualifiedReferencesOfSchemaObject<C["schema"]>]
+    C[`schema`]
+  >[keyof QualifiedReferencesOfSchemaObject<C[`schema`]>]
 
 type QualifiedReference<C extends Context<Schema>> =
   | QualifiedReferenceString<C>
@@ -93,14 +93,14 @@ type DefaultReferencesOfSchemaString<
 }>
 
 type DefaultReferenceString<C extends Context<Schema>> =
-  C["default"] extends undefined
+  C[`default`] extends undefined
     ? never
     : DefaultReferencesOfSchemaString<
-        C["schema"],
-        Exclude<C["default"], undefined>
+        C[`schema`],
+        Exclude<C[`default`], undefined>
       >[keyof DefaultReferencesOfSchemaString<
-        C["schema"],
-        Exclude<C["default"], undefined>
+        C[`schema`],
+        Exclude<C[`default`], undefined>
       >]
 
 type DefaultReferencesOfSchemaObject<
@@ -111,14 +111,14 @@ type DefaultReferencesOfSchemaObject<
 }>
 
 type DefaultReferenceObject<C extends Context<Schema>> =
-  C["default"] extends undefined
+  C[`default`] extends undefined
     ? never
     : DefaultReferencesOfSchemaObject<
-        C["schema"],
-        Exclude<C["default"], undefined>
+        C[`schema`],
+        Exclude<C[`default`], undefined>
       >[keyof DefaultReferencesOfSchemaObject<
-        C["schema"],
-        Exclude<C["default"], undefined>
+        C[`schema`],
+        Exclude<C[`default`], undefined>
       >]
 
 type DefaultReference<C extends Context<Schema>> =
@@ -135,8 +135,8 @@ type UniqueReferencesOfSchemaString<S extends Schema> = RemoveIndexSignature<{
 
 type UniqueReferenceString<C extends Context<Schema>> =
   UniqueReferencesOfSchemaString<
-    C["schema"]
-  >[keyof UniqueReferencesOfSchemaString<C["schema"]>]
+    C[`schema`]
+  >[keyof UniqueReferencesOfSchemaString<C[`schema`]>]
 
 type UniqueReferencesOfSchemaObject<S extends Schema> = RemoveIndexSignature<{
   [I in keyof S]: {
@@ -148,8 +148,8 @@ type UniqueReferencesOfSchemaObject<S extends Schema> = RemoveIndexSignature<{
 
 type UniqueReferenceObject<C extends Context<Schema>> =
   UniqueReferencesOfSchemaObject<
-    C["schema"]
-  >[keyof UniqueReferencesOfSchemaObject<C["schema"]>]
+    C[`schema`]
+  >[keyof UniqueReferencesOfSchemaObject<C[`schema`]>]
 
 type UniqueReference<C extends Context<Schema>> =
   | UniqueReferenceString<C>
@@ -157,22 +157,22 @@ type UniqueReference<C extends Context<Schema>> =
 
 type InputWildcardString<C extends Context<Schema>> = Flatten<
   {
-    [I in InputNames<C["schema"]>]: `@${I}.*`
-  }[InputNames<C["schema"]>]
+    [I in InputNames<C[`schema`]>]: `@${I}.*`
+  }[InputNames<C[`schema`]>]
 >
 
 type InputWildcardObject<C extends Context<Schema>> = Flatten<
   {
-    [I in InputNames<C["schema"]>]: { col: `${I}.*` }
-  }[InputNames<C["schema"]>]
+    [I in InputNames<C[`schema`]>]: { col: `${I}.*` }
+  }[InputNames<C[`schema`]>]
 >
 
 type InputWildcard<C extends Context<Schema>> =
   | InputWildcardString<C>
   | InputWildcardObject<C>
 
-type AllWildcardString = "@*"
-type AllWildcardObject = { col: "*" }
+type AllWildcardString = `@*`
+type AllWildcardObject = { col: `*` }
 type AllWildcard = AllWildcardString | AllWildcardObject
 
 export type PropertyReferenceString<C extends Context<Schema>> =
@@ -212,15 +212,15 @@ export type TypeFromPropertyReference<
 > = R extends
   | `@${infer InputName}.${infer PropName}`
   | { col: `${infer InputName}.${infer PropName}` }
-  ? InputName extends keyof C["schema"]
-    ? PropName extends keyof C["schema"][InputName]
-      ? C["schema"][InputName][PropName]
+  ? InputName extends keyof C[`schema`]
+    ? PropName extends keyof C[`schema`][InputName]
+      ? C[`schema`][InputName][PropName]
       : never
     : never
   : R extends `@${infer PropName}` | { col: `${infer PropName}` }
-    ? PropName extends keyof C["schema"][Exclude<C["default"], undefined>]
-      ? C["schema"][Exclude<C["default"], undefined>][PropName]
-      : C["schema"][InputWithProperty<C["schema"], PropName>][PropName]
+    ? PropName extends keyof C[`schema`][Exclude<C[`default`], undefined>]
+      ? C[`schema`][Exclude<C[`default`], undefined>][PropName]
+      : C[`schema`][InputWithProperty<C[`schema`], PropName>][PropName]
     : never
 
 /**
@@ -245,8 +245,8 @@ export type ResultKeyFromPropertyReference<
         : never
 
 export type InputReference<C extends Context<Schema>> = {
-  [I in InputNames<C["schema"]>]: I
-}[InputNames<C["schema"]>]
+  [I in InputNames<C[`schema`]>]: I
+}[InputNames<C[`schema`]>]
 
 export type RenameInput<
   S extends Schema,
@@ -273,7 +273,7 @@ export type MaybeRenameInput<
  */
 export type InferResultTypeFromSelectTuple<
   C extends Context<Schema>,
-  S extends readonly Select<C>[],
+  S extends ReadonlyArray<Select<C>>,
 > = UnionToIntersection<
   {
     [K in keyof S]: S[K] extends Select<C> ? InferResultType<C, S[K]> : never
@@ -301,10 +301,10 @@ type InferResultType<C extends Context<Schema>, S extends Select<C>> =
         >
       }
     : S extends WildcardReferenceString<C>
-      ? S extends "@*"
+      ? S extends `@*`
         ? InferAllColumnsType<C>
         : S extends `@${infer TableName}.*`
-          ? TableName extends keyof C["schema"]
+          ? TableName extends keyof C[`schema`]
             ? InferTableColumnsType<C, TableName>
             : {}
           : {}
@@ -322,19 +322,19 @@ type InferResultType<C extends Context<Schema>, S extends Select<C>> =
  * Infers the result type for all columns from all tables
  */
 type InferAllColumnsType<C extends Context<Schema>> = {
-  [K in keyof C["schema"]]: {
-    [P in keyof C["schema"][K]]: C["schema"][K][P]
+  [K in keyof C[`schema`]]: {
+    [P in keyof C[`schema`][K]]: C[`schema`][K][P]
   }
-}[keyof C["schema"]]
+}[keyof C[`schema`]]
 
 /**
  * Infers the result type for all columns from a specific table
  */
 type InferTableColumnsType<
   C extends Context<Schema>,
-  T extends keyof C["schema"],
+  T extends keyof C[`schema`],
 > = {
-  [P in keyof C["schema"][T]]: C["schema"][T][P]
+  [P in keyof C[`schema`][T]]: C[`schema`][T][P]
 }
 
 /**
@@ -350,9 +350,9 @@ type InferFunctionCallResultType<
     : F extends { AVG: any }
       ? number
       : F extends { MIN: any }
-        ? InferOperandType<C, F["MIN"]>
+        ? InferOperandType<C, F[`MIN`]>
         : F extends { MAX: any }
-          ? InferOperandType<C, F["MAX"]>
+          ? InferOperandType<C, F[`MAX`]>
           : F extends { DATE: any }
             ? string
             : F extends { JSON_EXTRACT: any }
@@ -364,7 +364,7 @@ type InferFunctionCallResultType<
                   : F extends { LOWER: any }
                     ? string
                     : F extends { COALESCE: any }
-                      ? InferOperandType<C, F["COALESCE"]>
+                      ? InferOperandType<C, F[`COALESCE`]>
                       : F extends { CONCAT: any }
                         ? string
                         : F extends { LENGTH: any }
@@ -385,9 +385,9 @@ type InferOperandType<
     : O extends LiteralValue
       ? O
       : O extends ExplicitLiteral
-        ? O["value"]
+        ? O[`value`]
         : O extends FunctionCall<C>
           ? InferFunctionCallResultType<C, O>
-          : O extends ConditionOperand<C>[]
+          : O extends Array<ConditionOperand<C>>
             ? InferOperandType<C, O[number]>
             : unknown

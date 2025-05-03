@@ -1,16 +1,11 @@
-import {
-  groupBy,
-  map,
-  groupByOperators,
-  IStreamBuilder,
-} from "@electric-sql/d2ts"
-import { Query } from "./schema"
+import { groupBy, groupByOperators, map } from "@electric-sql/d2ts"
 import {
   evaluateOperandOnNestedRow,
   extractValueFromNestedRow,
 } from "./extractors"
-import { ConditionOperand, FunctionCall } from "./schema"
 import { isAggregateFunctionCall } from "./utils"
+import type { ConditionOperand, FunctionCall, Query } from "./schema"
+import type { IStreamBuilder } from "@electric-sql/d2ts"
 
 const { sum, count, avg, min, max, median, mode } = groupByOperators
 
@@ -33,10 +28,10 @@ export function processGroupBy(
 
     // Extract each groupBy column value
     for (const column of groupByColumns) {
-      if (typeof column === "string" && (column as string).startsWith("@")) {
+      if (typeof column === `string` && (column as string).startsWith(`@`)) {
         const columnRef = (column as string).substring(1)
-        const columnName = columnRef.includes(".")
-          ? columnRef.split(".")[1]
+        const columnName = columnRef.includes(`.`)
+          ? columnRef.split(`.`)[1]
           : columnRef
 
         key[columnName!] = extractValueFromNestedRow(
@@ -55,9 +50,9 @@ export function processGroupBy(
 
   // Scan the SELECT clause for aggregate functions
   for (const item of query.select) {
-    if (typeof item === "object") {
+    if (typeof item === `object`) {
       for (const [alias, expr] of Object.entries(item)) {
-        if (typeof expr === "object" && isAggregateFunctionCall(expr)) {
+        if (typeof expr === `object` && isAggregateFunctionCall(expr)) {
           // Get the function name (the only key in the object)
           const functionName = Object.keys(expr)[0]
           // Get the column reference or expression to aggregate
@@ -103,7 +98,7 @@ export function getAggregateFunction(
   // Create a value extractor function for the column to aggregate
   const valueExtractor = (nestedRow: Record<string, unknown>) => {
     let value: unknown
-    if (typeof columnRef === "string" && columnRef.startsWith("@")) {
+    if (typeof columnRef === `string` && columnRef.startsWith(`@`)) {
       value = extractValueFromNestedRow(
         nestedRow,
         columnRef.substring(1),
@@ -117,24 +112,24 @@ export function getAggregateFunction(
       )
     }
     // Ensure we return a number for aggregate functions
-    return typeof value === "number" ? value : 0
+    return typeof value === `number` ? value : 0
   }
 
   // Return the appropriate aggregate function
   switch (functionName.toUpperCase()) {
-    case "SUM":
+    case `SUM`:
       return sum(valueExtractor)
-    case "COUNT":
+    case `COUNT`:
       return count() // count() doesn't need a value extractor
-    case "AVG":
+    case `AVG`:
       return avg(valueExtractor)
-    case "MIN":
+    case `MIN`:
       return min(valueExtractor)
-    case "MAX":
+    case `MAX`:
       return max(valueExtractor)
-    case "MEDIAN":
+    case `MEDIAN`:
       return median(valueExtractor)
-    case "MODE":
+    case `MODE`:
       return mode(valueExtractor)
     default:
       throw new Error(`Unsupported aggregate function: ${functionName}`)

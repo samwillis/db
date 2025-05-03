@@ -2,16 +2,16 @@
  * Helper function to determine if an object is a function call with an aggregate function
  */
 export function isAggregateFunctionCall(obj: any): boolean {
-  if (!obj || typeof obj !== "object") return false
+  if (!obj || typeof obj !== `object`) return false
 
   const aggregateFunctions = [
-    "SUM",
-    "COUNT",
-    "AVG",
-    "MIN",
-    "MAX",
-    "MEDIAN",
-    "MODE",
+    `SUM`,
+    `COUNT`,
+    `AVG`,
+    `MIN`,
+    `MAX`,
+    `MEDIAN`,
+    `MODE`,
   ]
   const keys = Object.keys(obj)
 
@@ -22,10 +22,10 @@ export function isAggregateFunctionCall(obj: any): boolean {
  * Helper function to determine if an object is an ORDER_INDEX function call
  */
 export function isOrderIndexFunctionCall(obj: any): boolean {
-  if (!obj || typeof obj !== "object") return false
+  if (!obj || typeof obj !== `object`) return false
 
   const keys = Object.keys(obj)
-  return keys.length === 1 && keys[0] === "ORDER_INDEX"
+  return keys.length === 1 && keys[0] === `ORDER_INDEX`
 }
 
 /**
@@ -37,9 +37,9 @@ export function isComparable(
   value: unknown
 ): value is number | string | Date | boolean {
   return (
-    typeof value === "number" ||
-    typeof value === "string" ||
-    typeof value === "boolean" ||
+    typeof value === `number` ||
+    typeof value === `string` ||
+    typeof value === `boolean` ||
     value instanceof Date
   )
 }
@@ -55,7 +55,7 @@ export function isComparable(
 export function compareValues(
   left: unknown,
   right: unknown,
-  operator: "<" | "<=" | ">" | ">="
+  operator: `<` | `<=` | `>` | `>=`
 ): boolean {
   // First check if both values are comparable
   if (!isComparable(left) || !isComparable(right)) {
@@ -67,21 +67,21 @@ export function compareValues(
   // If they're different types but both are strings or numbers, convert to strings
   if (
     typeof left !== typeof right &&
-    (typeof left === "string" || typeof left === "number") &&
-    (typeof right === "string" || typeof right === "number")
+    (typeof left === `string` || typeof left === `number`) &&
+    (typeof right === `string` || typeof right === `number`)
   ) {
     // Convert to strings for comparison (follows JavaScript's coercion rules)
     const leftStr = String(left)
     const rightStr = String(right)
 
     switch (operator) {
-      case "<":
+      case `<`:
         return leftStr < rightStr
-      case "<=":
+      case `<=`:
         return leftStr <= rightStr
-      case ">":
+      case `>`:
         return leftStr > rightStr
-      case ">=":
+      case `>=`:
         return leftStr >= rightStr
     }
   }
@@ -92,13 +92,13 @@ export function compareValues(
     const rightTime = right.getTime()
 
     switch (operator) {
-      case "<":
+      case `<`:
         return leftTime < rightTime
-      case "<=":
+      case `<=`:
         return leftTime <= rightTime
-      case ">":
+      case `>`:
         return leftTime > rightTime
-      case ">=":
+      case `>=`:
         return leftTime >= rightTime
     }
   }
@@ -106,13 +106,13 @@ export function compareValues(
   // For other cases where types match
   if (typeof left === typeof right) {
     switch (operator) {
-      case "<":
+      case `<`:
         return left < right
-      case "<=":
+      case `<=`:
         return left <= right
-      case ">":
+      case `>`:
         return left > right
-      case ">=":
+      case `>=`:
         return left >= right
     }
   }
@@ -129,14 +129,14 @@ export function compareValues(
  * @returns A regex-compatible pattern string
  */
 export function convertLikeToRegex(pattern: string): string {
-  let finalPattern = ""
+  let finalPattern = ``
   let i = 0
 
   while (i < pattern.length) {
     const char = pattern[i]
 
     // Handle escape character
-    if (char === "\\" && i + 1 < pattern.length) {
+    if (char === `\\` && i + 1 < pattern.length) {
       // Add the next character as a literal (escaped)
       finalPattern += pattern[i + 1]
       i += 2 // Skip both the escape and the escaped character
@@ -145,31 +145,31 @@ export function convertLikeToRegex(pattern: string): string {
 
     // Handle SQL LIKE special characters
     switch (char) {
-      case "%":
+      case `%`:
         // % matches any sequence of characters (including empty)
-        finalPattern += ".*"
+        finalPattern += `.*`
         break
-      case "_":
+      case `_`:
         // _ matches any single character
-        finalPattern += "."
+        finalPattern += `.`
         break
       // Handle regex special characters
-      case ".":
-      case "^":
-      case "$":
-      case "*":
-      case "+":
-      case "?":
-      case "(":
-      case ")":
-      case "[":
-      case "]":
-      case "{":
-      case "}":
-      case "|":
-      case "/":
+      case `.`:
+      case `^`:
+      case `$`:
+      case `*`:
+      case `+`:
+      case `?`:
+      case `(`:
+      case `)`:
+      case `[`:
+      case `]`:
+      case `{`:
+      case `}`:
+      case `|`:
+      case `/`:
         // Escape regex special characters
-        finalPattern += "\\" + char
+        finalPattern += `\\` + char
         break
       default:
         // Regular character, just add it
@@ -191,7 +191,7 @@ export function convertLikeToRegex(pattern: string): string {
  */
 export function isValueInArray(
   value: unknown,
-  array: unknown[],
+  array: Array<unknown>,
   caseInsensitive: boolean = false
 ): boolean {
   // Direct inclusion check first (fastest path)
@@ -205,23 +205,21 @@ export function isValueInArray(
   }
 
   // Handle numbers and strings with type coercion
-  if (typeof value === "number" || typeof value === "string") {
+  if (typeof value === `number` || typeof value === `string`) {
     return array.some((item) => {
       // Same type, direct comparison
       if (typeof item === typeof value) {
-        if (typeof value === "string" && caseInsensitive) {
+        if (typeof value === `string` && caseInsensitive) {
           // Case-insensitive comparison for strings (only if explicitly enabled)
-          return (
-            (value as string).toLowerCase() === (item as string).toLowerCase()
-          )
+          return value.toLowerCase() === (item as string).toLowerCase()
         }
         return item === value
       }
 
       // Different types, try coercion for number/string
       if (
-        (typeof item === "number" || typeof item === "string") &&
-        (typeof value === "number" || typeof value === "string")
+        (typeof item === `number` || typeof item === `string`) &&
+        (typeof value === `number` || typeof value === `string`)
       ) {
         // Convert both to strings for comparison
         return String(item) === String(value)
@@ -232,10 +230,10 @@ export function isValueInArray(
   }
 
   // Handle objects/arrays by comparing stringified versions
-  if (typeof value === "object" && value !== null) {
+  if (typeof value === `object` && value !== null) {
     const valueStr = JSON.stringify(value)
     return array.some((item) => {
-      if (typeof item === "object" && item !== null) {
+      if (typeof item === `object` && item !== null) {
         return JSON.stringify(item) === valueStr
       }
       return false

@@ -1,4 +1,4 @@
-import { AllowedFunctionName } from "./schema.js"
+import type { AllowedFunctionName } from "./schema.js"
 
 /**
  * Type for function implementations
@@ -9,8 +9,8 @@ type FunctionImplementation = (arg: unknown) => unknown
  * Converts a string to uppercase
  */
 function upperFunction(arg: unknown): string {
-  if (typeof arg !== "string") {
-    throw new Error("UPPER function expects a string argument")
+  if (typeof arg !== `string`) {
+    throw new Error(`UPPER function expects a string argument`)
   }
   return arg.toUpperCase()
 }
@@ -19,8 +19,8 @@ function upperFunction(arg: unknown): string {
  * Converts a string to lowercase
  */
 function lowerFunction(arg: unknown): string {
-  if (typeof arg !== "string") {
-    throw new Error("LOWER function expects a string argument")
+  if (typeof arg !== `string`) {
+    throw new Error(`LOWER function expects a string argument`)
   }
   return arg.toLowerCase()
 }
@@ -29,11 +29,11 @@ function lowerFunction(arg: unknown): string {
  * Returns the length of a string or array
  */
 function lengthFunction(arg: unknown): number {
-  if (typeof arg === "string" || Array.isArray(arg)) {
+  if (typeof arg === `string` || Array.isArray(arg)) {
     return arg.length
   }
 
-  throw new Error("LENGTH function expects a string or array argument")
+  throw new Error(`LENGTH function expects a string or array argument`)
 }
 
 /**
@@ -41,16 +41,16 @@ function lengthFunction(arg: unknown): number {
  */
 function concatFunction(arg: unknown): string {
   if (!Array.isArray(arg)) {
-    throw new Error("CONCAT function expects an array of string arguments")
+    throw new Error(`CONCAT function expects an array of string arguments`)
   }
 
   if (arg.length === 0) {
-    return ""
+    return ``
   }
 
   // Check that all arguments are strings
   for (let i = 0; i < arg.length; i++) {
-    if (arg[i] !== null && arg[i] !== undefined && typeof arg[i] !== "string") {
+    if (arg[i] !== null && arg[i] !== undefined && typeof arg[i] !== `string`) {
       throw new Error(
         `CONCAT function expects all arguments to be strings, but argument at position ${i} is ${typeof arg[i]}`
       )
@@ -59,8 +59,8 @@ function concatFunction(arg: unknown): string {
 
   // Concatenate strings, treating null and undefined as empty strings
   return arg
-    .map((str) => (str === null || str === undefined ? "" : str))
-    .join("")
+    .map((str) => (str === null || str === undefined ? `` : str))
+    .join(``)
 }
 
 /**
@@ -68,7 +68,7 @@ function concatFunction(arg: unknown): string {
  */
 function coalesceFunction(arg: unknown): unknown {
   if (!Array.isArray(arg)) {
-    throw new Error("COALESCE function expects an array of arguments")
+    throw new Error(`COALESCE function expects an array of arguments`)
   }
 
   if (arg.length === 0) {
@@ -101,7 +101,7 @@ function dateFunction(arg: unknown): Date | null {
   }
 
   // Handle string and number conversions
-  if (typeof arg === "string" || typeof arg === "number") {
+  if (typeof arg === `string` || typeof arg === `number`) {
     const date = new Date(arg)
 
     // Check if the date is valid
@@ -112,7 +112,7 @@ function dateFunction(arg: unknown): Date | null {
     return date
   }
 
-  throw new Error("DATE function expects a string, number, or Date argument")
+  throw new Error(`DATE function expects a string, number, or Date argument`)
 }
 
 /**
@@ -125,7 +125,7 @@ function dateFunction(arg: unknown): Date | null {
 function jsonExtractFunction(arg: unknown): unknown {
   if (!Array.isArray(arg) || arg.length < 1) {
     throw new Error(
-      "JSON_EXTRACT function expects an array with at least one element [jsonInput, ...pathElements]"
+      `JSON_EXTRACT function expects an array with at least one element [jsonInput, ...pathElements]`
     )
   }
 
@@ -139,7 +139,7 @@ function jsonExtractFunction(arg: unknown): unknown {
   // Parse JSON if it's a string
   let jsonData: any
 
-  if (typeof jsonInput === "string") {
+  if (typeof jsonInput === `string`) {
     try {
       jsonData = JSON.parse(jsonInput)
     } catch (error) {
@@ -147,12 +147,12 @@ function jsonExtractFunction(arg: unknown): unknown {
         `JSON_EXTRACT function could not parse JSON string: ${error instanceof Error ? error.message : String(error)}`
       )
     }
-  } else if (typeof jsonInput === "object") {
+  } else if (typeof jsonInput === `object`) {
     // If already an object, use it directly
     jsonData = jsonInput
   } else {
     throw new Error(
-      "JSON_EXTRACT function expects a JSON string or object as the first argument"
+      `JSON_EXTRACT function expects a JSON string or object as the first argument`
     )
   }
 
@@ -168,7 +168,7 @@ function jsonExtractFunction(arg: unknown): unknown {
     const pathElement = pathElements[i]
 
     // Path elements should be strings
-    if (typeof pathElement !== "string") {
+    if (typeof pathElement !== `string`) {
       throw new Error(
         `JSON_EXTRACT function expects path elements to be strings, but element at position ${i + 1} is ${typeof pathElement}`
       )
@@ -178,7 +178,7 @@ function jsonExtractFunction(arg: unknown): unknown {
     if (
       current === null ||
       current === undefined ||
-      typeof current !== "object"
+      typeof current !== `object`
     ) {
       return null
     }
@@ -201,13 +201,13 @@ function orderIndexFunction(arg: unknown): null {
   // This is just a placeholder - the actual index is provided by the orderBy operator
   // The function validates that the argument is one of the expected values
   if (
-    arg !== "numeric" &&
-    arg !== "fractional" &&
+    arg !== `numeric` &&
+    arg !== `fractional` &&
     arg !== true &&
-    arg !== "default"
+    arg !== `default`
   ) {
     throw new Error(
-      'ORDER_INDEX function expects "numeric", "fractional", "default", or true as argument'
+      `ORDER_INDEX function expects "numeric", "fractional", "default", or true as argument`
     )
   }
   return null
@@ -255,7 +255,7 @@ export function evaluateFunction(
  * @returns True if the object is a function call, false otherwise
  */
 export function isFunctionCall(obj: unknown): boolean {
-  if (!obj || typeof obj !== "object") {
+  if (!obj || typeof obj !== `object`) {
     return false
   }
 
@@ -279,7 +279,7 @@ export function extractFunctionCall(obj: Record<string, unknown>): {
 } {
   const keys = Object.keys(obj)
   if (keys.length !== 1) {
-    throw new Error("Invalid function call: object must have exactly one key")
+    throw new Error(`Invalid function call: object must have exactly one key`)
   }
 
   const functionName = keys[0] as AllowedFunctionName

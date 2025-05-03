@@ -1,8 +1,10 @@
-import { map, IStreamBuilder } from "@electric-sql/d2ts"
-import { ConditionOperand } from "./schema"
-import { Query } from "./schema"
-import { extractValueFromNestedRow } from "./extractors"
-import { evaluateOperandOnNestedRow } from "./extractors"
+import { map } from "@electric-sql/d2ts"
+import {
+  evaluateOperandOnNestedRow,
+  extractValueFromNestedRow,
+} from "./extractors"
+import type { IStreamBuilder } from "@electric-sql/d2ts"
+import type { ConditionOperand, Query } from "./schema"
 
 export function processSelect(
   pipeline: IStreamBuilder<Record<string, unknown>>,
@@ -21,13 +23,13 @@ export function processSelect(
         Object.keys(nestedRow).some(
           (key) =>
             !Object.keys(inputs).includes(key) &&
-            typeof nestedRow[key] !== "object"
+            typeof nestedRow[key] !== `object`
         )
 
       for (const item of query.select) {
-        if (typeof item === "string") {
+        if (typeof item === `string`) {
           // Handle wildcard select - all columns from all tables
-          if (item === "@*") {
+          if (item === `@*`) {
             // For grouped results, just return the row as is
             if (isGroupedResult) {
               Object.assign(result, nestedRow)
@@ -40,8 +42,8 @@ export function processSelect(
 
           // Handle @table.* syntax - all columns from a specific table
           if (
-            (item as string).startsWith("@") &&
-            (item as string).endsWith(".*")
+            (item as string).startsWith(`@`) &&
+            (item as string).endsWith(`.*`)
           ) {
             const tableAlias = (item as string).slice(1, -2) // Remove the '@' and '.*' parts
 
@@ -61,7 +63,7 @@ export function processSelect(
           }
 
           // Handle simple column references like "@table.column" or "@column"
-          if ((item as string).startsWith("@")) {
+          if ((item as string).startsWith(`@`)) {
             const columnRef = (item as string).substring(1)
             const alias = columnRef
 
@@ -80,8 +82,8 @@ export function processSelect(
 
             // If the alias contains a dot (table.column),
             // use just the column part as the field name
-            if (alias.includes(".")) {
-              const columnName = alias.split(".")[1]
+            if (alias.includes(`.`)) {
+              const columnName = alias.split(`.`)[1]
               result[columnName!] = result[alias]
               delete result[alias]
             }
@@ -89,7 +91,7 @@ export function processSelect(
         } else {
           // Handle aliased columns like { alias: "@column_name" }
           for (const [alias, expr] of Object.entries(item)) {
-            if (typeof expr === "string" && (expr as string).startsWith("@")) {
+            if (typeof expr === `string` && (expr as string).startsWith(`@`)) {
               const columnRef = (expr as string).substring(1)
 
               // For grouped results, check if the column is directly in the row first
@@ -104,7 +106,7 @@ export function processSelect(
                   undefined
                 )
               }
-            } else if (typeof expr === "object") {
+            } else if (typeof expr === `object`) {
               // For grouped results, the aggregate results are already in the row
               if (isGroupedResult && alias in nestedRow) {
                 result[alias] = nestedRow[alias]
@@ -135,7 +137,7 @@ function extractAllColumnsFromAllTables(
 
   // Process each table in the nested row
   for (const [tableAlias, tableData] of Object.entries(nestedRow)) {
-    if (tableData && typeof tableData === "object") {
+    if (tableData && typeof tableData === `object`) {
       // Add all columns from this table to the result
       // If there are column name conflicts, the last table's columns will overwrite previous ones
       Object.assign(result, extractAllColumnsFromTable(nestedRow, tableAlias))
@@ -158,7 +160,7 @@ function extractAllColumnsFromTable(
     | null
     | undefined
 
-  if (!tableData || typeof tableData !== "object") {
+  if (!tableData || typeof tableData !== `object`) {
     return result
   }
 

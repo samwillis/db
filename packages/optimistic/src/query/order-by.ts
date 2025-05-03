@@ -1,17 +1,16 @@
 import {
   map,
   orderBy,
-  orderByWithIndex,
   orderByWithFractionalIndex,
+  orderByWithIndex,
   topK,
-  topKWithIndex,
   topKWithFractionalIndex,
-  IStreamBuilder,
+  topKWithIndex,
 } from "@electric-sql/d2ts"
-import { Query } from "./schema"
 import { evaluateOperandOnNestedRow } from "./extractors"
-import { ConditionOperand } from "./schema"
 import { isOrderIndexFunctionCall } from "./utils"
+import type { ConditionOperand, Query } from "./schema"
+import type { IStreamBuilder } from "@electric-sql/d2ts"
 
 export function processOrderBy(
   resultPipeline: IStreamBuilder<
@@ -22,14 +21,14 @@ export function processOrderBy(
 ) {
   // Check if any column in the SELECT clause is an ORDER_INDEX function call
   let hasOrderIndexColumn = false
-  let orderIndexType: "numeric" | "fractional" = "numeric"
-  let orderIndexAlias = ""
+  let orderIndexType: `numeric` | `fractional` = `numeric`
+  let orderIndexAlias = ``
 
   // Scan the SELECT clause for ORDER_INDEX functions
   for (const item of query.select) {
-    if (typeof item === "object") {
+    if (typeof item === `object`) {
       for (const [alias, expr] of Object.entries(item)) {
-        if (typeof expr === "object" && isOrderIndexFunctionCall(expr)) {
+        if (typeof expr === `object` && isOrderIndexFunctionCall(expr)) {
           hasOrderIndexColumn = true
           orderIndexAlias = alias
           orderIndexType = getOrderIndexType(expr)
@@ -43,38 +42,38 @@ export function processOrderBy(
   // Normalize orderBy to an array of objects
   const orderByItems: Array<{
     operand: ConditionOperand
-    direction: "asc" | "desc"
+    direction: `asc` | `desc`
   }> = []
 
-  if (typeof query.orderBy === "string") {
+  if (typeof query.orderBy === `string`) {
     // Handle string format: '@column'
     orderByItems.push({
       operand: query.orderBy,
-      direction: "asc",
+      direction: `asc`,
     })
   } else if (Array.isArray(query.orderBy)) {
     // Handle array format: ['@column1', { '@column2': 'desc' }]
     for (const item of query.orderBy) {
-      if (typeof item === "string") {
+      if (typeof item === `string`) {
         orderByItems.push({
           operand: item,
-          direction: "asc",
+          direction: `asc`,
         })
-      } else if (typeof item === "object") {
+      } else if (typeof item === `object`) {
         for (const [column, direction] of Object.entries(item)) {
           orderByItems.push({
             operand: column,
-            direction: direction as "asc" | "desc",
+            direction: direction as `asc` | `desc`,
           })
         }
       }
     }
-  } else if (typeof query.orderBy === "object") {
+  } else if (typeof query.orderBy === `object`) {
     // Handle object format: { '@column': 'desc' }
     for (const [column, direction] of Object.entries(query.orderBy)) {
       orderByItems.push({
         operand: column,
-        direction: direction as "asc" | "desc",
+        direction: direction as `asc` | `desc`,
       })
     }
   }
@@ -96,9 +95,9 @@ export function processOrderBy(
         )
 
         // Reverse the value for 'desc' ordering
-        return item.direction === "desc" && typeof value === "number"
+        return item.direction === `desc` && typeof value === `number`
           ? -value
-          : item.direction === "desc" && typeof value === "string"
+          : item.direction === `desc` && typeof value === `string`
             ? String.fromCharCode(
                 ...[...value].map((c) => 0xffff - c.charCodeAt(0))
               )
@@ -114,9 +113,9 @@ export function processOrderBy(
       )
 
       // Reverse the value for 'desc' ordering
-      return item!.direction === "desc" && typeof value === "number"
+      return item!.direction === `desc` && typeof value === `number`
         ? -value
-        : item!.direction === "desc" && typeof value === "string"
+        : item!.direction === `desc` && typeof value === `string`
           ? String.fromCharCode(
               ...[...value].map((c) => 0xffff - c.charCodeAt(0))
             )
@@ -129,15 +128,15 @@ export function processOrderBy(
 
   const comparator = (a: unknown, b: unknown): number => {
     // if a and b are both numbers compare them directly
-    if (typeof a === "number" && typeof b === "number") {
+    if (typeof a === `number` && typeof b === `number`) {
       return a - b
     }
     // if a and b are both strings, compare them lexicographically
-    if (typeof a === "string" && typeof b === "string") {
+    if (typeof a === `string` && typeof b === `string`) {
       return a.localeCompare(b)
     }
     // if a and b are both booleans, compare them
-    if (typeof a === "boolean" && typeof b === "boolean") {
+    if (typeof a === `boolean` && typeof b === `boolean`) {
       return a ? 1 : -1
     }
     // if a and b are both dates, compare them
@@ -175,7 +174,7 @@ export function processOrderBy(
 
   // Apply the appropriate orderBy operator based on whether an ORDER_INDEX column is requested
   if (hasOrderIndexColumn) {
-    if (orderIndexType === "numeric") {
+    if (orderIndexType === `numeric`) {
       if (query.keyBy) {
         // Use orderByWithIndex for numeric indices
         resultPipeline = resultPipeline.pipe(
@@ -273,17 +272,17 @@ export function processOrderBy(
 }
 
 // Helper function to extract the ORDER_INDEX type from a function call
-function getOrderIndexType(obj: any): "numeric" | "fractional" {
+function getOrderIndexType(obj: any): `numeric` | `fractional` {
   if (!isOrderIndexFunctionCall(obj)) {
-    throw new Error("Not an ORDER_INDEX function call")
+    throw new Error(`Not an ORDER_INDEX function call`)
   }
 
-  const arg = obj["ORDER_INDEX"]
-  if (arg === "numeric" || arg === true || arg === "default") {
-    return "numeric"
-  } else if (arg === "fractional") {
-    return "fractional"
+  const arg = obj[`ORDER_INDEX`]
+  if (arg === `numeric` || arg === true || arg === `default`) {
+    return `numeric`
+  } else if (arg === `fractional`) {
+    return `fractional`
   } else {
-    throw new Error("Invalid ORDER_INDEX type: " + arg)
+    throw new Error(`Invalid ORDER_INDEX type: ` + arg)
   }
 }

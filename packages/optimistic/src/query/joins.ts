@@ -1,14 +1,13 @@
 import {
-  IStreamBuilder,
-  filter,
-  map,
-  JoinType,
   consolidate,
+  filter,
   join as joinOperator,
+  map,
 } from "@electric-sql/d2ts"
 import { evaluateConditionOnNestedRow } from "./evaluators.js"
-import { Query } from "./index.js"
 import { extractJoinKey } from "./extractors.js"
+import type { Query } from "./index.js"
+import type { IStreamBuilder, JoinType } from "@electric-sql/d2ts"
 
 /**
  * Creates a processing pipeline for join clauses
@@ -29,7 +28,7 @@ export function processJoinClause(
 
     // Get the right join type for the operator
     const joinType: JoinType =
-      joinClause.type === "cross" ? "inner" : joinClause.type
+      joinClause.type === `cross` ? `inner` : joinClause.type
 
     // We need to prepare the main pipeline and the joined pipeline
     // to have the correct key format for joining
@@ -79,37 +78,37 @@ export function processJoinClause(
 
     // Apply join with appropriate typings based on join type
     switch (joinType) {
-      case "inner":
+      case `inner`:
         pipeline = mainPipeline.pipe(
-          joinOperator(joinedPipeline, "inner"),
+          joinOperator(joinedPipeline, `inner`),
           consolidate(),
           processJoinResults(mainTableAlias, joinedTableAlias, joinClause)
         )
         break
-      case "left":
+      case `left`:
         pipeline = mainPipeline.pipe(
-          joinOperator(joinedPipeline, "left"),
+          joinOperator(joinedPipeline, `left`),
           consolidate(),
           processJoinResults(mainTableAlias, joinedTableAlias, joinClause)
         )
         break
-      case "right":
+      case `right`:
         pipeline = mainPipeline.pipe(
-          joinOperator(joinedPipeline, "right"),
+          joinOperator(joinedPipeline, `right`),
           consolidate(),
           processJoinResults(mainTableAlias, joinedTableAlias, joinClause)
         )
         break
-      case "full":
+      case `full`:
         pipeline = mainPipeline.pipe(
-          joinOperator(joinedPipeline, "full"),
+          joinOperator(joinedPipeline, `full`),
           consolidate(),
           processJoinResults(mainTableAlias, joinedTableAlias, joinClause)
         )
         break
       default:
         pipeline = mainPipeline.pipe(
-          joinOperator(joinedPipeline, "inner"),
+          joinOperator(joinedPipeline, `inner`),
           consolidate(),
           processJoinResults(mainTableAlias, joinedTableAlias, joinClause)
         )
@@ -141,19 +140,19 @@ export function processJoinResults(
         ]
 
         // For inner joins, both sides should be non-null
-        if (joinClause.type === "inner" || joinClause.type === "cross") {
+        if (joinClause.type === `inner` || joinClause.type === `cross`) {
           if (!mainNestedRow || !joinedNestedRow) {
             return undefined // Will be filtered out
           }
         }
 
         // For left joins, the main row must be non-null
-        if (joinClause.type === "left" && !mainNestedRow) {
+        if (joinClause.type === `left` && !mainNestedRow) {
           return undefined // Will be filtered out
         }
 
         // For right joins, the joined row must be non-null
-        if (joinClause.type === "right" && !joinedNestedRow) {
+        if (joinClause.type === `right` && !joinedNestedRow) {
           return undefined // Will be filtered out
         }
 
@@ -172,7 +171,7 @@ export function processJoinResults(
           Object.entries(joinedNestedRow).forEach(([tableAlias, tableData]) => {
             mergedNestedRow[tableAlias] = tableData
           })
-        } else if (joinClause.type === "left" || joinClause.type === "full") {
+        } else if (joinClause.type === `left` || joinClause.type === `full`) {
           // For left or full joins, add the joined table with null data if missing
           mergedNestedRow[joinedTableAlias] = null
         }
@@ -180,7 +179,7 @@ export function processJoinResults(
         // For right or full joins, add the main table with null data if missing
         if (
           !mainNestedRow &&
-          (joinClause.type === "right" || joinClause.type === "full")
+          (joinClause.type === `right` || joinClause.type === `full`)
         ) {
           mergedNestedRow[mainTableAlias] = null
         }
@@ -195,26 +194,26 @@ export function processJoinResults(
       // Process the ON condition
       filter((nestedRow: Record<string, unknown>) => {
         // If there's no ON condition, or it's a cross join, always return true
-        if (!joinClause.on || joinClause.type === "cross") {
+        if (!joinClause.on || joinClause.type === `cross`) {
           return true
         }
 
         // For LEFT JOIN, if the right side is null, we should include the row
         if (
-          joinClause.type === "left" &&
+          joinClause.type === `left` &&
           nestedRow[joinedTableAlias] === null
         ) {
           return true
         }
 
         // For RIGHT JOIN, if the left side is null, we should include the row
-        if (joinClause.type === "right" && nestedRow[mainTableAlias] === null) {
+        if (joinClause.type === `right` && nestedRow[mainTableAlias] === null) {
           return true
         }
 
         // For FULL JOIN, if either side is null, we should include the row
         if (
-          joinClause.type === "full" &&
+          joinClause.type === `full` &&
           (nestedRow[mainTableAlias] === null ||
             nestedRow[joinedTableAlias] === null)
         ) {
@@ -243,6 +242,6 @@ export function processJoinResults(
         )
         return result
       })
-    ) as IStreamBuilder<Record<string, unknown>>
+    )
   }
 }

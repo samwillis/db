@@ -1,12 +1,12 @@
-import {
-  Condition,
-  SimpleCondition,
-  Comparator,
-  ConditionOperand,
-  LogicalOperator,
-} from "./schema.js"
 import { evaluateOperandOnNestedRow } from "./extractors.js"
 import { compareValues, convertLikeToRegex, isValueInArray } from "./utils.js"
+import type {
+  Comparator,
+  Condition,
+  ConditionOperand,
+  LogicalOperator,
+  SimpleCondition,
+} from "./schema.js"
 
 /**
  * Evaluates a condition against a nested row structure
@@ -23,7 +23,7 @@ export function evaluateConditionOnNestedRow(
     return evaluateSimpleConditionOnNestedRow(
       nestedRow,
       left,
-      comparator as Comparator,
+      comparator,
       right,
       mainTableAlias,
       joinedTableAlias
@@ -34,8 +34,8 @@ export function evaluateConditionOnNestedRow(
   if (
     condition.length > 3 &&
     !Array.isArray(condition[0]) &&
-    typeof condition[1] === "string" &&
-    !["and", "or"].includes(condition[1] as string)
+    typeof condition[1] === `string` &&
+    ![`and`, `or`].includes(condition[1] as string)
   ) {
     // Start with the first condition (first 3 elements)
     let result = evaluateSimpleConditionOnNestedRow(
@@ -63,9 +63,9 @@ export function evaluateConditionOnNestedRow(
         )
 
         // Apply the logical operator
-        if (logicalOp === "and") {
+        if (logicalOp === `and`) {
           result = result && nextResult
-        } else if (logicalOp === "or") {
+        } else if (logicalOp === `or`) {
           result = result || nextResult
         }
       }
@@ -92,7 +92,7 @@ export function evaluateConditionOnNestedRow(
       const nextCondition = condition[i + 1] as Condition
 
       // Apply the logical operator
-      if (operator === "and") {
+      if (operator === `and`) {
         result =
           result &&
           evaluateConditionOnNestedRow(
@@ -101,7 +101,7 @@ export function evaluateConditionOnNestedRow(
             mainTableAlias,
             joinedTableAlias
           )
-      } else if (operator === "or") {
+      } else if (operator === `or`) {
         result =
           result ||
           evaluateConditionOnNestedRow(
@@ -147,28 +147,28 @@ export function evaluateSimpleConditionOnNestedRow(
 
   // The rest of the function remains the same as evaluateSimpleCondition
   switch (comparator) {
-    case "=":
+    case `=`:
       return leftValue === rightValue
-    case "!=":
+    case `!=`:
       return leftValue !== rightValue
-    case "<":
-      return compareValues(leftValue, rightValue, "<")
-    case "<=":
-      return compareValues(leftValue, rightValue, "<=")
-    case ">":
-      return compareValues(leftValue, rightValue, ">")
-    case ">=":
-      return compareValues(leftValue, rightValue, ">=")
-    case "like":
-    case "not like":
-      if (typeof leftValue === "string" && typeof rightValue === "string") {
+    case `<`:
+      return compareValues(leftValue, rightValue, `<`)
+    case `<=`:
+      return compareValues(leftValue, rightValue, `<=`)
+    case `>`:
+      return compareValues(leftValue, rightValue, `>`)
+    case `>=`:
+      return compareValues(leftValue, rightValue, `>=`)
+    case `like`:
+    case `not like`:
+      if (typeof leftValue === `string` && typeof rightValue === `string`) {
         // Convert SQL LIKE pattern to proper regex pattern
-        let pattern = convertLikeToRegex(rightValue)
-        const matches = new RegExp(`^${pattern}$`, "i").test(leftValue)
-        return comparator === "like" ? matches : !matches
+        const pattern = convertLikeToRegex(rightValue)
+        const matches = new RegExp(`^${pattern}$`, `i`).test(leftValue)
+        return comparator === `like` ? matches : !matches
       }
-      return comparator === "like" ? false : true
-    case "in":
+      return comparator === `like` ? false : true
+    case `in`:
       // If right value is not an array, we can't do an IN operation
       if (!Array.isArray(rightValue)) {
         return false
@@ -187,7 +187,7 @@ export function evaluateSimpleConditionOnNestedRow(
       // Handle single value comparison
       return isValueInArray(leftValue, rightValue)
 
-    case "not in":
+    case `not in`:
       // If right value is not an array, everything is "not in" it
       if (!Array.isArray(rightValue)) {
         return true
@@ -206,9 +206,9 @@ export function evaluateSimpleConditionOnNestedRow(
       // Handle single value comparison
       return !isValueInArray(leftValue, rightValue)
 
-    case "is":
+    case `is`:
       return leftValue === rightValue
-    case "is not":
+    case `is not`:
       // Properly handle null/undefined checks
       if (rightValue === null) {
         return leftValue !== null && leftValue !== undefined

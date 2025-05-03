@@ -1,9 +1,17 @@
-import { describe, it, expect } from "vitest"
-import { D2, MessageType, output, MultiSet, Message } from "@electric-sql/d2ts"
-import { v, Antichain } from "@electric-sql/d2ts"
-import { Query, Condition, compileQuery } from "../../src/query/index.js"
+import { describe, expect, it } from "vitest"
+import {
+  Antichain,
+  D2,
+  MessageType,
+  MultiSet,
+  output,
+  v,
+} from "@electric-sql/d2ts"
+import { compileQuery } from "../../src/query/index.js"
+import type { Condition, Query } from "../../src/query/index.js"
+import type { Message } from "@electric-sql/d2ts"
 
-describe("Query - LIKE Operator", () => {
+describe(`Query - LIKE Operator`, () => {
   // Sample test data
   type TestItem = {
     id: number
@@ -23,50 +31,50 @@ describe("Query - LIKE Operator", () => {
   }
 
   // Sample products for testing
-  const testData: TestItem[] = [
+  const testData: Array<TestItem> = [
     {
       id: 1,
-      name: 'Laptop Pro 15"',
-      description: "A professional laptop with 15-inch screen",
-      SKU: "TECH-LP15-2023",
-      category: "Electronics",
+      name: `Laptop Pro 15"`,
+      description: `A professional laptop with 15-inch screen`,
+      SKU: `TECH-LP15-2023`,
+      category: `Electronics`,
     },
     {
       id: 2,
-      name: "Smartphone X",
-      description: "Latest smartphone with AI features",
-      SKU: "TECH-SPX-2023",
-      category: "Electronics",
+      name: `Smartphone X`,
+      description: `Latest smartphone with AI features`,
+      SKU: `TECH-SPX-2023`,
+      category: `Electronics`,
     },
     {
       id: 3,
-      name: "Office Desk 60%",
-      description: "60% discount on this ergonomic desk!",
-      SKU: "FURN-DSK-60PCT",
-      category: "Furniture",
+      name: `Office Desk 60%`,
+      description: `60% discount on this ergonomic desk!`,
+      SKU: `FURN-DSK-60PCT`,
+      category: `Furniture`,
     },
     {
       id: 4,
-      name: "Programming 101",
-      description: "Learn programming basics",
-      SKU: "BOOK-PRG-101",
-      category: "Books",
+      name: `Programming 101`,
+      description: `Learn programming basics`,
+      SKU: `BOOK-PRG-101`,
+      category: `Books`,
     },
     {
       id: 5,
-      name: "USB-C Cable (2m)",
-      description: "2-meter USB-C cable for fast charging",
-      SKU: "ACC-USBC-2M",
-      category: "Accessories",
+      name: `USB-C Cable (2m)`,
+      description: `2-meter USB-C cable for fast charging`,
+      SKU: `ACC-USBC-2M`,
+      category: `Accessories`,
     },
   ]
 
-  function runQuery(query: Query): any[] {
+  function runQuery(query: Query): Array<any> {
     const graph = new D2({ initialFrontier: v([0, 0]) })
     const input = graph.newInput<TestItem>()
     const pipeline = compileQuery(query, { [query.from]: input })
 
-    const messages: Message<any>[] = []
+    const messages: Array<Message<any>> = []
     pipeline.pipe(
       output((message) => {
         messages.push(message)
@@ -86,25 +94,25 @@ describe("Query - LIKE Operator", () => {
     )
   }
 
-  it("should handle basic percent wildcard matching", () => {
+  it(`should handle basic percent wildcard matching`, () => {
     const query: Query<Context> = {
-      select: ["@id", "@name"],
-      from: "items",
-      where: ["@name", "like", "Laptop%"] as Condition,
+      select: [`@id`, `@name`],
+      from: `items`,
+      where: [`@name`, `like`, `Laptop%`] as Condition,
     }
 
     const results = runQuery(query)
 
     expect(results).toHaveLength(1)
     expect(results[0].id).toBe(1)
-    expect(results[0].name).toBe('Laptop Pro 15"')
+    expect(results[0].name).toBe(`Laptop Pro 15"`)
   })
 
-  it("should handle wildcards at the beginning and middle of pattern", () => {
+  it(`should handle wildcards at the beginning and middle of pattern`, () => {
     const query: Query<Context> = {
-      select: ["@id", "@name", "@description"],
-      from: "items",
-      where: ["@description", "like", "%laptop%"] as Condition,
+      select: [`@id`, `@name`, `@description`],
+      from: `items`,
+      where: [`@description`, `like`, `%laptop%`] as Condition,
     }
 
     const results = runQuery(query)
@@ -113,29 +121,29 @@ describe("Query - LIKE Operator", () => {
     expect(results[0].id).toBe(1)
   })
 
-  it("should handle underscore wildcard (single character)", () => {
+  it(`should handle underscore wildcard (single character)`, () => {
     // Let's generate more items with different SKUs to test the underscore pattern precisely
-    const skuTestItems: TestItem[] = [
+    const skuTestItems: Array<TestItem> = [
       {
         id: 101,
-        name: "Test Item 1",
-        description: "Test description",
-        SKU: "TECH-ABC-2023",
-        category: "Test",
+        name: `Test Item 1`,
+        description: `Test description`,
+        SKU: `TECH-ABC-2023`,
+        category: `Test`,
       },
       {
         id: 102,
-        name: "Test Item 2",
-        description: "Test description",
-        SKU: "TECH-XYZ-2023",
-        category: "Test",
+        name: `Test Item 2`,
+        description: `Test description`,
+        SKU: `TECH-XYZ-2023`,
+        category: `Test`,
       },
     ]
 
     const query: Query<Context> = {
-      select: ["@id", "@SKU"],
-      from: "items",
-      where: ["@SKU", "like", "TECH-___-2023"] as Condition,
+      select: [`@id`, `@SKU`],
+      from: `items`,
+      where: [`@SKU`, `like`, `TECH-___-2023`] as Condition,
     }
 
     // Create a separate graph for this test with our specific SKU test items
@@ -143,7 +151,7 @@ describe("Query - LIKE Operator", () => {
     const input = graph.newInput<TestItem>()
     const pipeline = compileQuery(query, { [query.from]: input })
 
-    const messages: Message<any>[] = []
+    const messages: Array<Message<any>> = []
     pipeline.pipe(
       output((message) => {
         messages.push(message)
@@ -170,11 +178,11 @@ describe("Query - LIKE Operator", () => {
     expect(results.map((r) => r.id).sort()).toEqual([101, 102])
   })
 
-  it("should handle mixed underscore and percent wildcards", () => {
+  it(`should handle mixed underscore and percent wildcards`, () => {
     const query: Query<Context> = {
-      select: ["@id", "@SKU"],
-      from: "items",
-      where: ["@SKU", "like", "TECH-__%-____"] as Condition,
+      select: [`@id`, `@SKU`],
+      from: `items`,
+      where: [`@SKU`, `like`, `TECH-__%-____`] as Condition,
     }
 
     const results = runQuery(query)
@@ -183,11 +191,11 @@ describe("Query - LIKE Operator", () => {
     expect(results.map((r) => r.id).sort()).toEqual([1, 2])
   })
 
-  it("should handle escaped special characters", () => {
+  it(`should handle escaped special characters`, () => {
     const query: Query<Context> = {
-      select: ["@id", "@name"],
-      from: "items",
-      where: ["@name", "like", "Office Desk 60\\%"] as Condition,
+      select: [`@id`, `@name`],
+      from: `items`,
+      where: [`@name`, `like`, `Office Desk 60\\%`] as Condition,
     }
 
     const results = runQuery(query)
@@ -196,11 +204,11 @@ describe("Query - LIKE Operator", () => {
     expect(results[0].id).toBe(3)
   })
 
-  it("should handle NOT LIKE operator correctly", () => {
+  it(`should handle NOT LIKE operator correctly`, () => {
     const query: Query<Context> = {
-      select: ["@id", "@name", "@category"],
-      from: "items",
-      where: ["@category", "not like", "Elec%"] as Condition,
+      select: [`@id`, `@name`, `@category`],
+      from: `items`,
+      where: [`@category`, `not like`, `Elec%`] as Condition,
     }
 
     const results = runQuery(query)
@@ -209,11 +217,11 @@ describe("Query - LIKE Operator", () => {
     expect(results.map((r) => r.id).sort()).toEqual([3, 4, 5])
   })
 
-  it("should handle regex special characters in patterns", () => {
+  it(`should handle regex special characters in patterns`, () => {
     const query: Query<Context> = {
-      select: ["@id", "@name", "@description"],
-      from: "items",
-      where: ["@description", "like", "%[0-9]%"] as Condition, // Using regex special char
+      select: [`@id`, `@name`, `@description`],
+      from: `items`,
+      where: [`@description`, `like`, `%[0-9]%`] as Condition, // Using regex special char
     }
 
     const results = runQuery(query)
@@ -223,11 +231,11 @@ describe("Query - LIKE Operator", () => {
     expect(results).toHaveLength(0)
   })
 
-  it("should match numeric values in descriptions", () => {
+  it(`should match numeric values in descriptions`, () => {
     const query: Query<Context> = {
-      select: ["@id", "@name", "@description"],
-      from: "items",
-      where: ["@description", "like", "%2-%"] as Condition, // Looking for "2-" in description
+      select: [`@id`, `@name`, `@description`],
+      from: `items`,
+      where: [`@description`, `like`, `%2-%`] as Condition, // Looking for "2-" in description
     }
 
     const results = runQuery(query)
@@ -237,11 +245,11 @@ describe("Query - LIKE Operator", () => {
     expect(results[0].id).toBe(5)
   })
 
-  it("should do case-insensitive matching", () => {
+  it(`should do case-insensitive matching`, () => {
     const query: Query<Context> = {
-      select: ["@id", "@name"],
-      from: "items",
-      where: ["@name", "like", "laptop%"] as Condition, // lowercase, but data has uppercase
+      select: [`@id`, `@name`],
+      from: `items`,
+      where: [`@name`, `like`, `laptop%`] as Condition, // lowercase, but data has uppercase
     }
 
     const results = runQuery(query)

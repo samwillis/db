@@ -1,15 +1,15 @@
-import { describe, test, expect } from "vitest"
+import { describe, expect, test } from "vitest"
 import {
+  Antichain,
   D2,
-  Message,
   MessageType,
+  MultiSet,
   output,
   v,
-  Antichain,
-  MultiSet,
 } from "@electric-sql/d2ts"
-import { Query } from "../../src/query/index.js"
 import { compileQuery } from "../../src/query/compiler.js"
+import type { Message } from "@electric-sql/d2ts"
+import type { Query } from "../../src/query/index.js"
 
 // Sample user type for tests
 type User = {
@@ -30,32 +30,32 @@ type Context = {
 }
 
 // Sample data for tests
-const sampleUsers: User[] = [
-  { id: 1, name: "Alice", age: 25, email: "alice@example.com", active: true },
-  { id: 2, name: "Bob", age: 19, email: "bob@example.com", active: true },
+const sampleUsers: Array<User> = [
+  { id: 1, name: `Alice`, age: 25, email: `alice@example.com`, active: true },
+  { id: 2, name: `Bob`, age: 19, email: `bob@example.com`, active: true },
   {
     id: 3,
-    name: "Charlie",
+    name: `Charlie`,
     age: 30,
-    email: "charlie@example.com",
+    email: `charlie@example.com`,
     active: false,
   },
-  { id: 4, name: "Dave", age: 22, email: "dave@example.com", active: true },
+  { id: 4, name: `Dave`, age: 22, email: `dave@example.com`, active: true },
 ]
 
-describe("Query", () => {
-  describe("Compiler", () => {
-    test("basic select with all columns", () => {
+describe(`Query`, () => {
+  describe(`Compiler`, () => {
+    test(`basic select with all columns`, () => {
       const query: Query<Context> = {
-        select: ["@id", "@name", "@age", "@email", "@active"],
-        from: "users",
+        select: [`@id`, `@name`, `@age`, `@email`, `@active`],
+        from: `users`,
       }
 
       const graph = new D2({ initialFrontier: v([0, 0]) })
       const input = graph.newInput<User>()
       const pipeline = compileQuery(query, { [query.from]: input })
 
-      const messages: Message<any>[] = []
+      const messages: Array<Message<any>> = []
       pipeline.pipe(
         output((message) => {
           messages.push(message)
@@ -85,24 +85,24 @@ describe("Query", () => {
       // The results should contain objects with only the selected columns
       expect(results).toContainEqual({
         id: 1,
-        name: "Alice",
+        name: `Alice`,
         age: 25,
-        email: "alice@example.com",
+        email: `alice@example.com`,
         active: true,
       })
     })
 
-    test("select with aliased columns", () => {
+    test(`select with aliased columns`, () => {
       const query: Query<Context> = {
-        select: ["@id", { user_name: "@name" }, { years_old: "@age" }],
-        from: "users",
+        select: [`@id`, { user_name: `@name` }, { years_old: `@age` }],
+        from: `users`,
       }
 
       const graph = new D2({ initialFrontier: v([0, 0]) })
       const input = graph.newInput<User>()
       const pipeline = compileQuery(query, { [query.from]: input })
 
-      const messages: Message<any>[] = []
+      const messages: Array<Message<any>> = []
       pipeline.pipe(
         output((message) => {
           messages.push(message)
@@ -128,7 +128,7 @@ describe("Query", () => {
       // The results should contain objects with only the selected columns and aliases
       expect(results).toContainEqual({
         id: 1,
-        user_name: "Alice",
+        user_name: `Alice`,
         years_old: 25,
       })
 
@@ -136,23 +136,23 @@ describe("Query", () => {
       expect(results).toHaveLength(4)
       results.forEach((result) => {
         expect(Object.keys(result).sort()).toEqual(
-          ["id", "user_name", "years_old"].sort()
+          [`id`, `user_name`, `years_old`].sort()
         )
       })
     })
 
-    test("select with where clause", () => {
+    test(`select with where clause`, () => {
       const query: Query<Context> = {
-        select: ["@id", "@name", "@age"],
-        from: "users",
-        where: ["@age", ">", 20],
+        select: [`@id`, `@name`, `@age`],
+        from: `users`,
+        where: [`@age`, `>`, 20],
       }
 
       const graph = new D2({ initialFrontier: v([0, 0]) })
       const input = graph.newInput<User>()
       const pipeline = compileQuery(query, { [query.from]: input })
 
-      const messages: Message<any>[] = []
+      const messages: Array<Message<any>> = []
       pipeline.pipe(
         output((message) => {
           messages.push(message)
@@ -188,18 +188,18 @@ describe("Query", () => {
       expect(includedIds).toEqual([1, 3, 4]) // Alice, Charlie, Dave
     })
 
-    test("select with where clause using multiple conditions", () => {
+    test(`select with where clause using multiple conditions`, () => {
       const query: Query<Context> = {
-        select: ["@id", "@name"],
-        from: "users",
-        where: ["@age", ">", 20, "and", "@active", "=", true],
+        select: [`@id`, `@name`],
+        from: `users`,
+        where: [`@age`, `>`, 20, `and`, `@active`, `=`, true],
       }
 
       const graph = new D2({ initialFrontier: v([0, 0]) })
       const input = graph.newInput<User>()
       const pipeline = compileQuery(query, { [query.from]: input })
 
-      const messages: Message<any>[] = []
+      const messages: Array<Message<any>> = []
       pipeline.pipe(
         output((message) => {
           messages.push(message)

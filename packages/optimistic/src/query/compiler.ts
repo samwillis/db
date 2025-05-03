@@ -1,11 +1,12 @@
-import { filter, map, IStreamBuilder } from "@electric-sql/d2ts"
-import { Query, Condition } from "./schema.js"
+import { filter, map } from "@electric-sql/d2ts"
 import { evaluateConditionOnNestedRow } from "./evaluators.js"
 import { processJoinClause } from "./joins.js"
 import { processGroupBy } from "./group-by.js"
 import { processOrderBy } from "./order-by.js"
 import { processKeyBy } from "./key-by.js"
 import { processSelect } from "./select.js"
+import type { Condition, Query } from "./schema.js"
+import type { IStreamBuilder } from "@electric-sql/d2ts"
 
 /**
  * Compiles a query into a D2 pipeline
@@ -26,12 +27,12 @@ export function compileQuery<T extends IStreamBuilder<unknown>>(
     for (const withQuery of query.with) {
       // Ensure the WITH query has an alias
       if (!withQuery.as) {
-        throw new Error('WITH query must have an "as" property')
+        throw new Error(`WITH query must have an "as" property`)
       }
 
       // Ensure the WITH query is not keyed
       if ((withQuery as Query).keyBy !== undefined) {
-        throw new Error('WITH query cannot have a "keyBy" property')
+        throw new Error(`WITH query cannot have a "keyBy" property`)
       }
 
       // Check if this CTE name already exists in the inputs
@@ -44,10 +45,7 @@ export function compileQuery<T extends IStreamBuilder<unknown>>(
 
       // Compile the WITH query using the current set of inputs
       // (which includes previously compiled WITH queries)
-      const compiledWithQuery = compileQuery(
-        withQueryWithoutWith,
-        allInputs
-      ) as IStreamBuilder<Record<string, unknown>>
+      const compiledWithQuery = compileQuery(withQueryWithoutWith, allInputs)
 
       // Add the compiled query to the inputs map using its alias
       allInputs[withQuery.as] = compiledWithQuery
@@ -92,7 +90,7 @@ export function compileQuery<T extends IStreamBuilder<unknown>>(
     pipeline = pipeline.pipe(
       filter((nestedRow) => {
         const result = evaluateConditionOnNestedRow(
-          nestedRow as Record<string, unknown>,
+          nestedRow,
           query.where as Condition,
           mainTableAlias
         )
@@ -141,7 +139,7 @@ export function compileQuery<T extends IStreamBuilder<unknown>>(
   } else if (query.limit !== undefined || query.offset !== undefined) {
     // If there's a limit or offset without orderBy, throw an error
     throw new Error(
-      "LIMIT and OFFSET require an ORDER BY clause to ensure deterministic results"
+      `LIMIT and OFFSET require an ORDER BY clause to ensure deterministic results`
     )
   }
 
