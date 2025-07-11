@@ -7,6 +7,11 @@ import type { NamespacedRow } from "../../types.js"
 export type CompiledExpression = (namespacedRow: NamespacedRow) => any
 
 /**
+ * Compiled single-row expression evaluator function type
+ */
+export type CompiledSingleRowExpression = (item: Record<string, unknown>) => any
+
+/**
  * Compiles an expression into an optimized evaluator function.
  * This eliminates branching during evaluation by pre-compiling the expression structure.
  */
@@ -26,6 +31,34 @@ export function compileExpression(expr: BasicExpression): CompiledExpression {
     case `func`: {
       // For functions, pre-compile the function and its arguments
       return compileFunction(expr)
+    }
+
+    default:
+      throw new Error(`Unknown expression type: ${(expr as any).type}`)
+  }
+}
+
+/**
+ * Compiled single-row expression evaluator function type
+ */
+export function compileSingleRowExpression(
+  expr: BasicExpression
+): CompiledSingleRowExpression {
+  switch (expr.type) {
+    case `val`: {
+      // For constant values, return a function that just returns the value
+      const value = expr.value
+      return () => value
+    }
+
+    case `ref`: {
+      // For references, compile direct property access without table aliases
+      return compileSingleRowRef(expr)
+    }
+
+    case `func`: {
+      // For functions, pre-compile the function and its arguments
+      return compileSingleRowFunction(expr)
     }
 
     default:
@@ -63,6 +96,34 @@ function compileRef(ref: PropRef): CompiledExpression {
       }
 
       let value: any = tableData
+      for (const prop of propertyPath) {
+        if (value == null) {
+          return value
+        }
+        value = value[prop]
+      }
+      return value
+    }
+  }
+}
+
+/**
+ * Compiles a reference expression for single-row evaluation
+ */
+function compileSingleRowRef(ref: PropRef): CompiledSingleRowExpression {
+  const propertyPath = ref.path
+
+  if (propertyPath.length === 0) {
+    // Empty path - return the whole item
+    return (item) => item
+  } else if (propertyPath.length === 1) {
+    // Single property access - most common case
+    const prop = propertyPath[0]!
+    return (item) => item[prop]
+  } else {
+    // Multiple property navigation
+    return (item) => {
+      let value: any = item
       for (const prop of propertyPath) {
         if (value == null) {
           return value
@@ -277,6 +338,219 @@ function compileFunction(func: Func): CompiledExpression {
       return (namespacedRow) => {
         const a = argA(namespacedRow)
         const b = argB(namespacedRow)
+        const divisor = b ?? 0
+        return divisor !== 0 ? (a ?? 0) / divisor : null
+      }
+    }
+
+    default:
+      throw new Error(`Unknown function: ${func.name}`)
+  }
+}
+
+/**
+ * Compiles a function expression for single-row evaluation
+ */
+function compileSingleRowFunction(func: Func): CompiledSingleRowExpression {
+  // Pre-compile all arguments
+  const compiledArgs = func.args.map(compileSingleRowExpression)
+
+  switch (func.name) {
+    // Comparison operators
+    case `eq`: {
+      const argA = compiledArgs[0]!
+      const argB = compiledArgs[1]!
+      return (item) => {
+        const a = argA(item)
+        const b = argB(item)
+        return a === b
+      }
+    }
+    case `gt`: {
+      const argA = compiledArgs[0]!
+      const argB = compiledArgs[1]!
+      return (item) => {
+        const a = argA(item)
+        const b = argB(item)
+        return a > b
+      }
+    }
+    case `gte`: {
+      const argA = compiledArgs[0]!
+      const argB = compiledArgs[1]!
+      return (item) => {
+        const a = argA(item)
+        const b = argB(item)
+        return a >= b
+      }
+    }
+    case `lt`: {
+      const argA = compiledArgs[0]!
+      const argB = compiledArgs[1]!
+      return (item) => {
+        const a = argA(item)
+        const b = argB(item)
+        return a < b
+      }
+    }
+    case `lte`: {
+      const argA = compiledArgs[0]!
+      const argB = compiledArgs[1]!
+      return (item) => {
+        const a = argA(item)
+        const b = argB(item)
+        return a <= b
+      }
+    }
+
+    // Boolean operators
+    case `and`:
+      return (item) => {
+        for (const compiledArg of compiledArgs) {
+          if (!compiledArg(item)) {
+            return false
+          }
+        }
+        return true
+      }
+    case `or`:
+      return (item) => {
+        for (const compiledArg of compiledArgs) {
+          if (compiledArg(item)) {
+            return true
+          }
+        }
+        return false
+      }
+    case `not`: {
+      const arg = compiledArgs[0]!
+      return (item) => !arg(item)
+    }
+
+    // Array operators
+    case `in`: {
+      const valueEvaluator = compiledArgs[0]!
+      const arrayEvaluator = compiledArgs[1]!
+      return (item) => {
+        const value = valueEvaluator(item)
+        const array = arrayEvaluator(item)
+        if (!Array.isArray(array)) {
+          return false
+        }
+        return array.includes(value)
+      }
+    }
+
+    // String operators
+    case `like`: {
+      const valueEvaluator = compiledArgs[0]!
+      const patternEvaluator = compiledArgs[1]!
+      return (item) => {
+        const value = valueEvaluator(item)
+        const pattern = patternEvaluator(item)
+        return evaluateLike(value, pattern, false)
+      }
+    }
+    case `ilike`: {
+      const valueEvaluator = compiledArgs[0]!
+      const patternEvaluator = compiledArgs[1]!
+      return (item) => {
+        const value = valueEvaluator(item)
+        const pattern = patternEvaluator(item)
+        return evaluateLike(value, pattern, true)
+      }
+    }
+
+    // String functions
+    case `upper`: {
+      const arg = compiledArgs[0]!
+      return (item) => {
+        const value = arg(item)
+        return typeof value === `string` ? value.toUpperCase() : value
+      }
+    }
+    case `lower`: {
+      const arg = compiledArgs[0]!
+      return (item) => {
+        const value = arg(item)
+        return typeof value === `string` ? value.toLowerCase() : value
+      }
+    }
+    case `length`: {
+      const arg = compiledArgs[0]!
+      return (item) => {
+        const value = arg(item)
+        if (typeof value === `string`) {
+          return value.length
+        }
+        if (Array.isArray(value)) {
+          return value.length
+        }
+        return 0
+      }
+    }
+    case `concat`:
+      return (item) => {
+        return compiledArgs
+          .map((evaluator) => {
+            const arg = evaluator(item)
+            try {
+              return String(arg ?? ``)
+            } catch {
+              try {
+                return JSON.stringify(arg) || ``
+              } catch {
+                return `[object]`
+              }
+            }
+          })
+          .join(``)
+      }
+    case `coalesce`:
+      return (item) => {
+        for (const evaluator of compiledArgs) {
+          const value = evaluator(item)
+          if (value !== null && value !== undefined) {
+            return value
+          }
+        }
+        return null
+      }
+
+    // Math functions
+    case `add`: {
+      const argA = compiledArgs[0]!
+      const argB = compiledArgs[1]!
+      return (item) => {
+        const a = argA(item)
+        const b = argB(item)
+        return (a ?? 0) + (b ?? 0)
+      }
+    }
+    case `subtract`: {
+      const argA = compiledArgs[0]!
+      const argB = compiledArgs[1]!
+      return (item) => {
+        const a = argA(item)
+        const b = argB(item)
+        return (a ?? 0) - (b ?? 0)
+      }
+    }
+    case `multiply`: {
+      const argA = compiledArgs[0]!
+      const argB = compiledArgs[1]!
+      return (item) => {
+        const a = argA(item)
+        const b = argB(item)
+        return (a ?? 0) * (b ?? 0)
+      }
+    }
+    case `divide`: {
+      const argA = compiledArgs[0]!
+      const argB = compiledArgs[1]!
+      return (item) => {
+        const a = argA(item)
+        const b = argB(item)
         const divisor = b ?? 0
         return divisor !== 0 ? (a ?? 0) / divisor : null
       }

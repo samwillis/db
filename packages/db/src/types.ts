@@ -3,7 +3,7 @@ import type { Collection } from "./collection"
 import type { StandardSchemaV1 } from "@standard-schema/spec"
 import type { Transaction } from "./transactions"
 import type { BasicExpression } from "./query/ir"
-import type { RefProxy } from "./query/builder/ref-proxy"
+import type { SingleRowRefProxy } from "./query/builder/ref-proxy"
 
 /**
  * Helper type to extract the output type from a standard schema
@@ -511,41 +511,47 @@ export interface IndexOptions {
 
 /**
  * Represents an index for fast lookups on a collection
+ * All indexes are ordered to support range queries
  */
 export interface CollectionIndex<
-  T extends object = Record<string, unknown>,
   TKey extends string | number = string | number,
 > {
   /** Unique identifier for this index */
   id: string
   /** Optional name for the index */
   name?: string
-  /** The expression that defines what to index */
+  /** The expression that defines what to index (a Ref expression) */
   expression: BasicExpression
-  /** The function used to extract the indexed value from an item */
-  indexFn: (item: T) => any
-  /** Map from indexed value to Set of keys that have that value */
-  index: Map<any, Set<TKey>>
+  /** Ordered array of [indexedValue, Set<TKey>] pairs, sorted by indexedValue */
+  orderedEntries: Array<[any, Set<TKey>]>
+  /** Map from indexed value to Set of keys for fast equality lookups */
+  valueMap: Map<any, Set<TKey>>
   /** Set of all keys that have been indexed */
   indexedKeys: Set<TKey>
+  /** Comparison function used for ordering */
+  compareFn: (a: any, b: any) => number
 }
 
 /**
  * Options for subscribing to collection changes
  */
-export interface SubscribeChangesOptions<T extends object = Record<string, unknown>> {
+export interface SubscribeChangesOptions<
+  T extends object = Record<string, unknown>,
+> {
   /** Whether to include the current state as initial changes */
   includeInitialState?: boolean
   /** Filter changes using a where expression */
-  where?: (row: RefProxy<T> & T) => any
+  where?: (row: SingleRowRefProxy<T>) => any
 }
 
 /**
  * Options for getting current state as changes
  */
-export interface CurrentStateAsChangesOptions<T extends object = Record<string, unknown>> {
+export interface CurrentStateAsChangesOptions<
+  T extends object = Record<string, unknown>,
+> {
   /** Filter the current state using a where expression */
-  where?: (row: RefProxy<T> & T) => any
+  where?: (row: SingleRowRefProxy<T>) => any
 }
 
 /**

@@ -1,7 +1,13 @@
 import { withArrayChangeTracking, withChangeTracking } from "./proxy"
 import { createTransaction, getActiveTransaction } from "./transactions"
 import { SortedMap } from "./SortedMap"
-import { createRefProxy, toExpression, isRefProxy } from "./query/builder/ref-proxy"
+import {
+  createSingleRowRefProxy,
+  toExpression,
+} from "./query/builder/ref-proxy"
+import { compileSingleRowExpression } from "./query/compiler/evaluators.js"
+
+import { ascComparator } from "./utils/comparison.js"
 import type { Transaction } from "./transactions"
 import type {
   ChangeListener,
@@ -23,9 +29,7 @@ import type {
   UtilsRecord,
 } from "./types"
 import type { StandardSchemaV1 } from "@standard-schema/spec"
-import type { BasicExpression } from "./query/ir"
-import type { RefProxy } from "./query/builder/ref-proxy"
-import { PropRef } from "./query/ir"
+import type { SingleRowRefProxy } from "./query/builder/ref-proxy"
 
 // Store collections in memory
 export const collectionsStore = new Map<string, CollectionImpl<any, any>>()
@@ -204,7 +208,7 @@ export class CollectionImpl<
   private _size = 0
 
   // Index storage
-  private indexes = new Map<string, CollectionIndex<T, TKey>>()
+  private indexes = new Map<string, CollectionIndex<TKey>>()
   private indexCounter = 0
 
   // Event system
@@ -1216,64 +1220,52 @@ export class CollectionImpl<
 
   /**
    * Creates an index on the collection for faster lookups
+   * All indexes are ordered to support range queries
    * @param indexCallback - Function that extracts the value to index from each row
    * @param options - Optional configuration including index name
    * @returns The created index object
    * @example
    * // Create an index on a field
    * const nameIndex = collection.createIndex((row) => row.name)
-   * 
+   *
    * // Create a named index
    * const statusIndex = collection.createIndex((row) => row.status, {
    *   name: 'statusIndex'
    * })
-   * 
+   *
    * // Create an index on a computed value
    * const fullNameIndex = collection.createIndex((row) => `${row.firstName} ${row.lastName}`)
    */
   public createIndex(
-    indexCallback: (row: RefProxy<T> & T) => any,
+    indexCallback: (row: SingleRowRefProxy<T>) => any,
     options: IndexOptions = {}
-  ): CollectionIndex<T, TKey> {
+  ): CollectionIndex<TKey> {
     this.validateCollectionUsable(`createIndex`)
 
     // Generate unique ID for this index
     const indexId = `index_${++this.indexCounter}`
 
-    // Create the refProxy for the callback
-    const refProxy = createRefProxy<{ row: T }>([`row`])
+    // Create the single-row refProxy for the callback
+    const singleRowRefProxy = createSingleRowRefProxy<T>()
 
     // Execute the callback to get the expression
-    const indexExpression = indexCallback(refProxy.row as RefProxy<T> & T)
+    const indexExpression = indexCallback(singleRowRefProxy)
 
     // Convert the result to a BasicExpression
     const expression = toExpression(indexExpression)
 
-    // Create a function to extract the indexed value from an item
-    const indexFn = (item: T): any => {
-      // For simple property references, we can directly access the property
-      if (expression.type === `ref` && expression.path.length === 2 && expression.path[0] === `row`) {
-        const propertyPath = expression.path.slice(1)
-        let value: any = item
-        for (const prop of propertyPath) {
-          value = value?.[prop]
-        }
-        return value
-      }
-      
-      // For more complex expressions, we'd need to evaluate them
-      // For now, let's handle the simple case and throw for complex ones
-      throw new Error(`Complex index expressions are not yet supported. Only simple property references like (row) => row.fieldName are currently supported.`)
-    }
+    // Create a comparison function for ordering
+    const compareFn = this.createComparisonFunction()
 
     // Create the index
-    const index: CollectionIndex<T, TKey> = {
+    const index: CollectionIndex<TKey> = {
       id: indexId,
       name: options.name,
       expression,
-      indexFn,
-      index: new Map<any, Set<TKey>>(),
+      orderedEntries: [],
+      valueMap: new Map<any, Set<TKey>>(),
       indexedKeys: new Set<TKey>(),
+      compareFn,
     }
 
     // Build the index with current data
@@ -1286,33 +1278,113 @@ export class CollectionImpl<
   }
 
   /**
+   * Creates a comparison function for ordering index values
+   * Uses the exact same logic as the orderBy compiler for consistency
+   * @private
+   */
+  private createComparisonFunction(): (a: any, b: any) => number {
+    return ascComparator
+  }
+
+  /**
+   * Evaluates an index expression for a given item
+   * @private
+   */
+  private evaluateIndexExpression(index: CollectionIndex<TKey>, item: T): any {
+    // Use the single-row evaluator for direct property access without table aliases
+    const evaluator = compileSingleRowExpression(index.expression)
+
+    return evaluator(item as Record<string, unknown>)
+  }
+
+  /**
    * Builds an index by iterating through all current items
    * @private
    */
-  private buildIndex(index: CollectionIndex<T, TKey>): void {
+  private buildIndex(index: CollectionIndex<TKey>): void {
     // Clear existing index data
-    index.index.clear()
+    index.orderedEntries.length = 0
+    index.valueMap.clear()
     index.indexedKeys.clear()
+
+    // Collect all values first
+    const valueEntries = new Map<any, Set<TKey>>()
 
     // Index all current items
     for (const [key, item] of this.entries()) {
-      this.addToIndex(index, key, item)
+      try {
+        const indexedValue = this.evaluateIndexExpression(index, item)
+
+        if (!valueEntries.has(indexedValue)) {
+          valueEntries.set(indexedValue, new Set<TKey>())
+        }
+
+        valueEntries.get(indexedValue)!.add(key)
+        index.indexedKeys.add(key)
+      } catch (error) {
+        // If indexing fails for this item, skip it but don't break the whole index
+        console.warn(`Failed to index item with key ${key}:`, error)
+      }
+    }
+
+    // Sort the values and create ordered entries
+    // Note: JavaScript's Array.sort() always moves undefined to the end, regardless of comparison function
+    // So we need to manually handle undefined/null values to match the orderBy compiler behavior
+    const allValues = Array.from(valueEntries.keys())
+    const undefinedValues: Array<any> = []
+    const definedValues: Array<any> = []
+
+    for (const value of allValues) {
+      if (value == null) {
+        // null or undefined
+        undefinedValues.push(value)
+      } else {
+        definedValues.push(value)
+      }
+    }
+
+    // Sort defined values normally
+    definedValues.sort(index.compareFn)
+
+    // Sort undefined values (they should all be equal, but just in case)
+    undefinedValues.sort(index.compareFn)
+
+    // Combine with undefined/null first (to match orderBy compiler behavior)
+    const sortedValues = [...undefinedValues, ...definedValues]
+
+    for (const value of sortedValues) {
+      const keys = valueEntries.get(value)!
+      index.orderedEntries.push([value, keys])
+      index.valueMap.set(value, keys)
     }
   }
 
   /**
-   * Adds an item to an index
+   * Adds an item to an index, maintaining order
    * @private
    */
-  private addToIndex(index: CollectionIndex<T, TKey>, key: TKey, item: T): void {
+  private addToIndex(index: CollectionIndex<TKey>, key: TKey, item: T): void {
     try {
-      const indexedValue = index.indexFn(item)
-      
-      if (!index.index.has(indexedValue)) {
-        index.index.set(indexedValue, new Set<TKey>())
+      const indexedValue = this.evaluateIndexExpression(index, item)
+
+      // Check if this value already exists
+      if (index.valueMap.has(indexedValue)) {
+        // Add to existing set
+        index.valueMap.get(indexedValue)!.add(key)
+      } else {
+        // Create new set for this value
+        const keySet = new Set<TKey>([key])
+        index.valueMap.set(indexedValue, keySet)
+
+        // Find correct position in ordered entries using binary search
+        const insertIndex = this.findInsertPosition(
+          index.orderedEntries,
+          indexedValue,
+          index.compareFn
+        )
+        index.orderedEntries.splice(insertIndex, 0, [indexedValue, keySet])
       }
-      
-      index.index.get(indexedValue)!.add(key)
+
       index.indexedKeys.add(key)
     } catch (error) {
       // If indexing fails for this item, skip it but don't break the whole index
@@ -1321,21 +1393,34 @@ export class CollectionImpl<
   }
 
   /**
-   * Removes an item from an index
+   * Removes an item from an index, maintaining order
    * @private
    */
-  private removeFromIndex(index: CollectionIndex<T, TKey>, key: TKey, item: T): void {
+  private removeFromIndex(
+    index: CollectionIndex<TKey>,
+    key: TKey,
+    item: T
+  ): void {
     try {
-      const indexedValue = index.indexFn(item)
-      
-      const keysForValue = index.index.get(indexedValue)
+      const indexedValue = this.evaluateIndexExpression(index, item)
+
+      const keysForValue = index.valueMap.get(indexedValue)
       if (keysForValue) {
         keysForValue.delete(key)
         if (keysForValue.size === 0) {
-          index.index.delete(indexedValue)
+          // Remove from valueMap
+          index.valueMap.delete(indexedValue)
+
+          // Remove from orderedEntries
+          const entryIndex = index.orderedEntries.findIndex(
+            ([value]) => index.compareFn(value, indexedValue) === 0
+          )
+          if (entryIndex >= 0) {
+            index.orderedEntries.splice(entryIndex, 1)
+          }
         }
       }
-      
+
       index.indexedKeys.delete(key)
     } catch (error) {
       // If removing from index fails, skip it but don't break
@@ -1347,9 +1432,88 @@ export class CollectionImpl<
    * Updates an item in an index (removes old, adds new)
    * @private
    */
-  private updateInIndex(index: CollectionIndex<T, TKey>, key: TKey, oldItem: T, newItem: T): void {
+  private updateInIndex(
+    index: CollectionIndex<TKey>,
+    key: TKey,
+    oldItem: T,
+    newItem: T
+  ): void {
     this.removeFromIndex(index, key, oldItem)
     this.addToIndex(index, key, newItem)
+  }
+
+  /**
+   * Finds the correct insert position for a value in the ordered entries array
+   * @private
+   */
+  private findInsertPosition<V>(
+    orderedEntries: Array<[V, any]>,
+    value: V,
+    compareFn: (a: V, b: V) => number
+  ): number {
+    let left = 0
+    let right = orderedEntries.length
+
+    while (left < right) {
+      const mid = Math.floor((left + right) / 2)
+      const comparison = compareFn(orderedEntries[mid]![0], value)
+
+      if (comparison < 0) {
+        left = mid + 1
+      } else {
+        right = mid
+      }
+    }
+
+    return left
+  }
+
+  /**
+   * Performs a range query on an ordered index
+   * @private
+   */
+  private rangeQuery(
+    index: CollectionIndex<TKey>,
+    operation: `gt` | `gte` | `lt` | `lte` | `eq`,
+    value: any
+  ): Set<TKey> {
+    const result = new Set<TKey>()
+
+    if (operation === `eq`) {
+      // Fast equality lookup
+      const keys = index.valueMap.get(value)
+      if (keys) {
+        keys.forEach((key) => result.add(key))
+      }
+      return result
+    }
+
+    // Range operations - iterate through ordered entries
+    for (const [indexValue, keys] of index.orderedEntries) {
+      const comparison = index.compareFn(indexValue, value)
+
+      let matches = false
+      switch (operation) {
+        case `gt`:
+          matches = comparison > 0
+          break
+        case `gte`:
+          matches = comparison >= 0
+          break
+        case `lt`:
+          matches = comparison < 0
+          break
+        case `lte`:
+          matches = comparison <= 0
+          break
+      }
+
+      if (matches) {
+        keys.forEach((key) => result.add(key))
+      }
+    }
+
+    return result
   }
 
   /**
@@ -1365,7 +1529,12 @@ export class CollectionImpl<
             break
           case `update`:
             if (change.previousValue) {
-              this.updateInIndex(index, change.key, change.previousValue, change.value)
+              this.updateInIndex(
+                index,
+                change.key,
+                change.previousValue,
+                change.value
+              )
             } else {
               this.addToIndex(index, change.key, change.value)
             }
@@ -1953,7 +2122,7 @@ export class CollectionImpl<
    */
   stateWhenReady(): Promise<Map<TKey, T>> {
     // If we already have data or there are no loading collections, resolve immediately
-    if (this.size > 0 || this.hasReceivedFirstCommit === true) {
+    if (this.size > 0 || this.hasReceivedFirstCommit) {
       return Promise.resolve(this.state)
     }
 
@@ -1982,7 +2151,7 @@ export class CollectionImpl<
    */
   toArrayWhenReady(): Promise<Array<T>> {
     // If we already have data or there are no loading collections, resolve immediately
-    if (this.size > 0 || this.hasReceivedFirstCommit === true) {
+    if (this.size > 0 || this.hasReceivedFirstCommit) {
       return Promise.resolve(this.toArray)
     }
 
@@ -2001,13 +2170,15 @@ export class CollectionImpl<
    * @example
    * // Get all items as changes
    * const allChanges = collection.currentStateAsChanges()
-   * 
+   *
    * // Get only items matching a condition
    * const activeChanges = collection.currentStateAsChanges({
    *   where: (row) => row.status === 'active'
    * })
    */
-  public currentStateAsChanges(options: CurrentStateAsChangesOptions<T> = {}): Array<ChangeMessage<T>> {
+  public currentStateAsChanges(
+    options: CurrentStateAsChangesOptions<T> = {}
+  ): Array<ChangeMessage<T>> {
     if (!options.where) {
       // No filtering, return all items
       const result: Array<ChangeMessage<T>> = []
@@ -2023,61 +2194,86 @@ export class CollectionImpl<
 
     // There's a where clause, let's see if we can use an index
     const result: Array<ChangeMessage<T>> = []
-    
+
     try {
-      // Create the refProxy for the callback
-      const refProxy = createRefProxy<{ row: T }>([`row`])
-      
+      // Create the single-row refProxy for the callback
+      const singleRowRefProxy = createSingleRowRefProxy<T>()
+
       // Execute the callback to get the expression
-      const whereExpression = options.where(refProxy.row as RefProxy<T> & T)
-      
+      const whereExpression = options.where(singleRowRefProxy)
+
       // Convert the result to a BasicExpression
       const expression = toExpression(whereExpression)
-      
-      // Try to find a matching index for simple equality comparisons
+
+      // Try to find a matching index for simple comparisons
       let usedIndex = false
-      if (expression.type === `func` && expression.name === `eq` && expression.args.length === 2) {
+      if (expression.type === `func` && expression.args.length === 2) {
         const leftArg = expression.args[0]
         const rightArg = expression.args[1]
-        
-        // Check if this is a simple field equality: field = value
-        if (leftArg && leftArg.type === `ref` && rightArg && rightArg.type === `val`) {
-          const fieldPath = (leftArg as PropRef).path
-          
+
+        // Check if this is a simple field comparison: field op value
+        if (
+          leftArg &&
+          leftArg.type === `ref` &&
+          rightArg &&
+          rightArg.type === `val`
+        ) {
+          const fieldPath = leftArg.path
+          const operation = expression.name as
+            | `eq`
+            | `gt`
+            | `gte`
+            | `lt`
+            | `lte`
+
           // Find an index that matches this field
           for (const index of this.indexes.values()) {
-            if (index.expression.type === `ref` && 
-                index.expression.path.length === fieldPath.length &&
-                index.expression.path.every((part, i) => part === fieldPath[i])) {
-              
+            if (
+              index.expression.type === `ref` &&
+              index.expression.path.length === fieldPath.length &&
+              index.expression.path.every((part, i) => part === fieldPath[i])
+            ) {
               // Found a matching index! Use it for fast lookup
-              const indexValue = rightArg.value
-              const matchingKeys = index.index.get(indexValue)
-              
-              if (matchingKeys) {
-                for (const key of matchingKeys) {
-                  const value = this.get(key)
-                  if (value !== undefined) {
-                    result.push({
-                      type: `insert`,
-                      key,
-                      value,
-                    })
-                  }
+              const queryValue = rightArg.value
+              let matchingKeys: Set<TKey>
+
+              // Support different comparison operations
+              switch (operation) {
+                case `eq`:
+                case `gt`:
+                case `gte`:
+                case `lt`:
+                case `lte`:
+                  matchingKeys = this.rangeQuery(index, operation, queryValue)
+                  break
+                default:
+                  // Unsupported operation, fall back to full scan
+                  continue
+              }
+
+              // Add matching items to results
+              for (const key of matchingKeys) {
+                const value = this.get(key)
+                if (value !== undefined) {
+                  result.push({
+                    type: `insert`,
+                    key,
+                    value,
+                  })
                 }
               }
-              
+
               usedIndex = true
               break
             }
           }
         }
       }
-      
+
       if (!usedIndex) {
         // No index found or complex expression, fall back to full scan with filter
         const filterFn = this.createFilterFunction(options.where)
-        
+
         for (const [key, value] of this.entries()) {
           if (filterFn(value)) {
             result.push({
@@ -2088,13 +2284,15 @@ export class CollectionImpl<
           }
         }
       }
-      
     } catch (error) {
       // If anything goes wrong with the where clause, fall back to full scan
-      console.warn(`Error processing where clause, falling back to full scan:`, error)
-      
+      console.warn(
+        `Error processing where clause, falling back to full scan:`,
+        error
+      )
+
       const filterFn = this.createFilterFunction(options.where)
-      
+
       for (const [key, value] of this.entries()) {
         if (filterFn(value)) {
           result.push({
@@ -2105,7 +2303,7 @@ export class CollectionImpl<
         }
       }
     }
-    
+
     return result
   }
 
@@ -2113,23 +2311,34 @@ export class CollectionImpl<
    * Creates a filter function from a where callback
    * @private
    */
-  private createFilterFunction(whereCallback: (row: RefProxy<T> & T) => any): (item: T) => boolean {
+  private createFilterFunction(
+    whereCallback: (row: SingleRowRefProxy<T>) => any
+  ): (item: T) => boolean {
     return (item: T): boolean => {
       try {
-        // Create a simple proxy that just returns the item's properties
-        const itemProxy = new Proxy(item as any, {
-          get(target, prop) {
-            return target[prop]
-          }
-        })
-        
-        const result = whereCallback(itemProxy)
-        
-        // Convert result to boolean - for simple expressions this should work
+        // First try the RefProxy approach for query builder functions
+        const singleRowRefProxy = createSingleRowRefProxy<T>()
+        const whereExpression = whereCallback(singleRowRefProxy)
+        const expression = toExpression(whereExpression)
+        const evaluator = compileSingleRowExpression(expression)
+        const result = evaluator(item as Record<string, unknown>)
         return Boolean(result)
-      } catch (error) {
-        // If evaluation fails, exclude the item
-        return false
+      } catch {
+        // If RefProxy approach fails (e.g., arithmetic operations), fall back to direct evaluation
+        try {
+          // Create a simple proxy that returns actual values for arithmetic operations
+          const simpleProxy = new Proxy(item as any, {
+            get(target, prop) {
+              return target[prop]
+            },
+          }) as SingleRowRefProxy<T>
+
+          const result = whereCallback(simpleProxy)
+          return Boolean(result)
+        } catch {
+          // If both approaches fail, exclude the item
+          return false
+        }
       }
     }
   }
@@ -2154,12 +2363,12 @@ export class CollectionImpl<
    * const unsubscribe = collection.subscribeChanges((changes) => {
    *   updateUI(changes)
    * }, { includeInitialState: true })
-   * 
+   *
    * @example
    * // Subscribe only to changes matching a condition
    * const unsubscribe = collection.subscribeChanges((changes) => {
    *   updateUI(changes)
-   * }, { 
+   * }, {
    *   includeInitialState: true,
    *   where: (row) => row.status === 'active'
    * })
@@ -2172,13 +2381,15 @@ export class CollectionImpl<
     this.addSubscriber()
 
     // Create a filtered callback if where clause is provided
-    const filteredCallback = options.where 
+    const filteredCallback = options.where
       ? this.createFilteredCallback(callback, options.where)
       : callback
 
     if (options.includeInitialState) {
       // First send the current state as changes (filtered if needed)
-      const initialChanges = this.currentStateAsChanges({ where: options.where })
+      const initialChanges = this.currentStateAsChanges({
+        where: options.where,
+      })
       filteredCallback(initialChanges)
     }
 
@@ -2197,13 +2408,13 @@ export class CollectionImpl<
    */
   private createFilteredCallback(
     originalCallback: (changes: Array<ChangeMessage<T>>) => void,
-    whereCallback: (row: RefProxy<T> & T) => any
+    whereCallback: (row: SingleRowRefProxy<T>) => any
   ): (changes: Array<ChangeMessage<T>>) => void {
     const filterFn = this.createFilterFunction(whereCallback)
-    
+
     return (changes: Array<ChangeMessage<T>>) => {
       const filteredChanges: Array<ChangeMessage<T>> = []
-      
+
       for (const change of changes) {
         // For inserts and updates, check if the new value matches the filter
         if (change.type === `insert` || change.type === `update`) {
@@ -2213,13 +2424,13 @@ export class CollectionImpl<
         }
         // For deletes, include if the previous value would have matched
         // (so subscribers know something they were tracking was deleted)
-        else if (change.type === `delete`) {
+        else {
           if (filterFn(change.value)) {
             filteredChanges.push(change)
           }
         }
       }
-      
+
       if (filteredChanges.length > 0) {
         originalCallback(filteredChanges)
       }
