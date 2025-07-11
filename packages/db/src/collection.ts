@@ -1,23 +1,31 @@
 import { withArrayChangeTracking, withChangeTracking } from "./proxy"
 import { createTransaction, getActiveTransaction } from "./transactions"
 import { SortedMap } from "./SortedMap"
+import { createRefProxy, toExpression, isRefProxy } from "./query/builder/ref-proxy"
 import type { Transaction } from "./transactions"
 import type {
   ChangeListener,
   ChangeMessage,
   CollectionConfig,
+  CollectionIndex,
   CollectionStatus,
+  CurrentStateAsChangesOptions,
   Fn,
+  IndexOptions,
   InsertConfig,
   OperationConfig,
   OptimisticChangeMessage,
   PendingMutation,
   ResolveType,
   StandardSchema,
+  SubscribeChangesOptions,
   Transaction as TransactionType,
   UtilsRecord,
 } from "./types"
 import type { StandardSchemaV1 } from "@standard-schema/spec"
+import type { BasicExpression } from "./query/ir"
+import type { RefProxy } from "./query/builder/ref-proxy"
+import { PropRef } from "./query/ir"
 
 // Store collections in memory
 export const collectionsStore = new Map<string, CollectionImpl<any, any>>()
@@ -194,6 +202,10 @@ export class CollectionImpl<
 
   // Cached size for performance
   private _size = 0
+
+  // Index storage
+  private indexes = new Map<string, CollectionIndex<T, TKey>>()
+  private indexCounter = 0
 
   // Event system
   private changeListeners = new Set<ChangeListener<T, TKey>>()
@@ -792,6 +804,11 @@ export class CollectionImpl<
     changes: Array<ChangeMessage<T, TKey>>,
     endBatching = false
   ): void {
+    // Update indexes for all changes before any other processing
+    if (changes.length > 0) {
+      this.updateIndexes(changes)
+    }
+
     if (this.shouldBatchEvents && !endBatching) {
       // Add events to the batch
       this.batchedEvents.push(...changes)
@@ -1195,6 +1212,170 @@ export class CollectionImpl<
     }
 
     return `KEY::${this.id}/${key}`
+  }
+
+  /**
+   * Creates an index on the collection for faster lookups
+   * @param indexCallback - Function that extracts the value to index from each row
+   * @param options - Optional configuration including index name
+   * @returns The created index object
+   * @example
+   * // Create an index on a field
+   * const nameIndex = collection.createIndex((row) => row.name)
+   * 
+   * // Create a named index
+   * const statusIndex = collection.createIndex((row) => row.status, {
+   *   name: 'statusIndex'
+   * })
+   * 
+   * // Create an index on a computed value
+   * const fullNameIndex = collection.createIndex((row) => `${row.firstName} ${row.lastName}`)
+   */
+  public createIndex(
+    indexCallback: (row: RefProxy<T> & T) => any,
+    options: IndexOptions = {}
+  ): CollectionIndex<T, TKey> {
+    this.validateCollectionUsable(`createIndex`)
+
+    // Generate unique ID for this index
+    const indexId = `index_${++this.indexCounter}`
+
+    // Create the refProxy for the callback
+    const refProxy = createRefProxy<{ row: T }>([`row`])
+
+    // Execute the callback to get the expression
+    const indexExpression = indexCallback(refProxy.row as RefProxy<T> & T)
+
+    // Convert the result to a BasicExpression
+    const expression = toExpression(indexExpression)
+
+    // Create a function to extract the indexed value from an item
+    const indexFn = (item: T): any => {
+      // For simple property references, we can directly access the property
+      if (expression.type === `ref` && expression.path.length === 2 && expression.path[0] === `row`) {
+        const propertyPath = expression.path.slice(1)
+        let value: any = item
+        for (const prop of propertyPath) {
+          value = value?.[prop]
+        }
+        return value
+      }
+      
+      // For more complex expressions, we'd need to evaluate them
+      // For now, let's handle the simple case and throw for complex ones
+      throw new Error(`Complex index expressions are not yet supported. Only simple property references like (row) => row.fieldName are currently supported.`)
+    }
+
+    // Create the index
+    const index: CollectionIndex<T, TKey> = {
+      id: indexId,
+      name: options.name,
+      expression,
+      indexFn,
+      index: new Map<any, Set<TKey>>(),
+      indexedKeys: new Set<TKey>(),
+    }
+
+    // Build the index with current data
+    this.buildIndex(index)
+
+    // Store the index
+    this.indexes.set(indexId, index)
+
+    return index
+  }
+
+  /**
+   * Builds an index by iterating through all current items
+   * @private
+   */
+  private buildIndex(index: CollectionIndex<T, TKey>): void {
+    // Clear existing index data
+    index.index.clear()
+    index.indexedKeys.clear()
+
+    // Index all current items
+    for (const [key, item] of this.entries()) {
+      this.addToIndex(index, key, item)
+    }
+  }
+
+  /**
+   * Adds an item to an index
+   * @private
+   */
+  private addToIndex(index: CollectionIndex<T, TKey>, key: TKey, item: T): void {
+    try {
+      const indexedValue = index.indexFn(item)
+      
+      if (!index.index.has(indexedValue)) {
+        index.index.set(indexedValue, new Set<TKey>())
+      }
+      
+      index.index.get(indexedValue)!.add(key)
+      index.indexedKeys.add(key)
+    } catch (error) {
+      // If indexing fails for this item, skip it but don't break the whole index
+      console.warn(`Failed to index item with key ${key}:`, error)
+    }
+  }
+
+  /**
+   * Removes an item from an index
+   * @private
+   */
+  private removeFromIndex(index: CollectionIndex<T, TKey>, key: TKey, item: T): void {
+    try {
+      const indexedValue = index.indexFn(item)
+      
+      const keysForValue = index.index.get(indexedValue)
+      if (keysForValue) {
+        keysForValue.delete(key)
+        if (keysForValue.size === 0) {
+          index.index.delete(indexedValue)
+        }
+      }
+      
+      index.indexedKeys.delete(key)
+    } catch (error) {
+      // If removing from index fails, skip it but don't break
+      console.warn(`Failed to remove item with key ${key} from index:`, error)
+    }
+  }
+
+  /**
+   * Updates an item in an index (removes old, adds new)
+   * @private
+   */
+  private updateInIndex(index: CollectionIndex<T, TKey>, key: TKey, oldItem: T, newItem: T): void {
+    this.removeFromIndex(index, key, oldItem)
+    this.addToIndex(index, key, newItem)
+  }
+
+  /**
+   * Updates all indexes when the collection changes
+   * @private
+   */
+  private updateIndexes(changes: Array<ChangeMessage<T, TKey>>): void {
+    for (const index of this.indexes.values()) {
+      for (const change of changes) {
+        switch (change.type) {
+          case `insert`:
+            this.addToIndex(index, change.key, change.value)
+            break
+          case `update`:
+            if (change.previousValue) {
+              this.updateInIndex(index, change.key, change.previousValue, change.value)
+            } else {
+              this.addToIndex(index, change.key, change.value)
+            }
+            break
+          case `delete`:
+            this.removeFromIndex(index, change.key, change.value)
+            break
+        }
+      }
+    }
   }
 
   private deepEqual(a: any, b: any): boolean {
@@ -1815,20 +1996,148 @@ export class CollectionImpl<
 
   /**
    * Returns the current state of the collection as an array of changes
+   * @param options - Options including optional where filter
    * @returns An array of changes
+   * @example
+   * // Get all items as changes
+   * const allChanges = collection.currentStateAsChanges()
+   * 
+   * // Get only items matching a condition
+   * const activeChanges = collection.currentStateAsChanges({
+   *   where: (row) => row.status === 'active'
+   * })
    */
-  public currentStateAsChanges(): Array<ChangeMessage<T>> {
-    return Array.from(this.entries()).map(([key, value]) => ({
-      type: `insert`,
-      key,
-      value,
-    }))
+  public currentStateAsChanges(options: CurrentStateAsChangesOptions<T> = {}): Array<ChangeMessage<T>> {
+    if (!options.where) {
+      // No filtering, return all items
+      const result: Array<ChangeMessage<T>> = []
+      for (const [key, value] of this.entries()) {
+        result.push({
+          type: `insert`,
+          key,
+          value,
+        })
+      }
+      return result
+    }
+
+    // There's a where clause, let's see if we can use an index
+    const result: Array<ChangeMessage<T>> = []
+    
+    try {
+      // Create the refProxy for the callback
+      const refProxy = createRefProxy<{ row: T }>([`row`])
+      
+      // Execute the callback to get the expression
+      const whereExpression = options.where(refProxy.row as RefProxy<T> & T)
+      
+      // Convert the result to a BasicExpression
+      const expression = toExpression(whereExpression)
+      
+      // Try to find a matching index for simple equality comparisons
+      let usedIndex = false
+      if (expression.type === `func` && expression.name === `eq` && expression.args.length === 2) {
+        const leftArg = expression.args[0]
+        const rightArg = expression.args[1]
+        
+        // Check if this is a simple field equality: field = value
+        if (leftArg && leftArg.type === `ref` && rightArg && rightArg.type === `val`) {
+          const fieldPath = (leftArg as PropRef).path
+          
+          // Find an index that matches this field
+          for (const index of this.indexes.values()) {
+            if (index.expression.type === `ref` && 
+                index.expression.path.length === fieldPath.length &&
+                index.expression.path.every((part, i) => part === fieldPath[i])) {
+              
+              // Found a matching index! Use it for fast lookup
+              const indexValue = rightArg.value
+              const matchingKeys = index.index.get(indexValue)
+              
+              if (matchingKeys) {
+                for (const key of matchingKeys) {
+                  const value = this.get(key)
+                  if (value !== undefined) {
+                    result.push({
+                      type: `insert`,
+                      key,
+                      value,
+                    })
+                  }
+                }
+              }
+              
+              usedIndex = true
+              break
+            }
+          }
+        }
+      }
+      
+      if (!usedIndex) {
+        // No index found or complex expression, fall back to full scan with filter
+        const filterFn = this.createFilterFunction(options.where)
+        
+        for (const [key, value] of this.entries()) {
+          if (filterFn(value)) {
+            result.push({
+              type: `insert`,
+              key,
+              value,
+            })
+          }
+        }
+      }
+      
+    } catch (error) {
+      // If anything goes wrong with the where clause, fall back to full scan
+      console.warn(`Error processing where clause, falling back to full scan:`, error)
+      
+      const filterFn = this.createFilterFunction(options.where)
+      
+      for (const [key, value] of this.entries()) {
+        if (filterFn(value)) {
+          result.push({
+            type: `insert`,
+            key,
+            value,
+          })
+        }
+      }
+    }
+    
+    return result
+  }
+
+  /**
+   * Creates a filter function from a where callback
+   * @private
+   */
+  private createFilterFunction(whereCallback: (row: RefProxy<T> & T) => any): (item: T) => boolean {
+    return (item: T): boolean => {
+      try {
+        // Create a simple proxy that just returns the item's properties
+        const itemProxy = new Proxy(item as any, {
+          get(target, prop) {
+            return target[prop]
+          }
+        })
+        
+        const result = whereCallback(itemProxy)
+        
+        // Convert result to boolean - for simple expressions this should work
+        return Boolean(result)
+      } catch (error) {
+        // If evaluation fails, exclude the item
+        return false
+      }
+    }
   }
 
   /**
    * Subscribe to changes in the collection
    * @param callback - Function called when items change
-   * @param options.includeInitialState - If true, immediately calls callback with current data
+   * @param options - Subscription options including includeInitialState and where filter
    * @returns Unsubscribe function - Call this to stop listening for changes
    * @example
    * // Basic subscription
@@ -1845,25 +2154,75 @@ export class CollectionImpl<
    * const unsubscribe = collection.subscribeChanges((changes) => {
    *   updateUI(changes)
    * }, { includeInitialState: true })
+   * 
+   * @example
+   * // Subscribe only to changes matching a condition
+   * const unsubscribe = collection.subscribeChanges((changes) => {
+   *   updateUI(changes)
+   * }, { 
+   *   includeInitialState: true,
+   *   where: (row) => row.status === 'active'
+   * })
    */
   public subscribeChanges(
     callback: (changes: Array<ChangeMessage<T>>) => void,
-    { includeInitialState = false }: { includeInitialState?: boolean } = {}
+    options: SubscribeChangesOptions<T> = {}
   ): () => void {
     // Start sync and track subscriber
     this.addSubscriber()
 
-    if (includeInitialState) {
-      // First send the current state as changes
-      callback(this.currentStateAsChanges())
+    // Create a filtered callback if where clause is provided
+    const filteredCallback = options.where 
+      ? this.createFilteredCallback(callback, options.where)
+      : callback
+
+    if (options.includeInitialState) {
+      // First send the current state as changes (filtered if needed)
+      const initialChanges = this.currentStateAsChanges({ where: options.where })
+      filteredCallback(initialChanges)
     }
 
     // Add to batched listeners
-    this.changeListeners.add(callback)
+    this.changeListeners.add(filteredCallback)
 
     return () => {
-      this.changeListeners.delete(callback)
+      this.changeListeners.delete(filteredCallback)
       this.removeSubscriber()
+    }
+  }
+
+  /**
+   * Creates a filtered callback that only calls the original callback with changes that match the where clause
+   * @private
+   */
+  private createFilteredCallback(
+    originalCallback: (changes: Array<ChangeMessage<T>>) => void,
+    whereCallback: (row: RefProxy<T> & T) => any
+  ): (changes: Array<ChangeMessage<T>>) => void {
+    const filterFn = this.createFilterFunction(whereCallback)
+    
+    return (changes: Array<ChangeMessage<T>>) => {
+      const filteredChanges: Array<ChangeMessage<T>> = []
+      
+      for (const change of changes) {
+        // For inserts and updates, check if the new value matches the filter
+        if (change.type === `insert` || change.type === `update`) {
+          if (filterFn(change.value)) {
+            filteredChanges.push(change)
+          }
+        }
+        // For deletes, include if the previous value would have matched
+        // (so subscribers know something they were tracking was deleted)
+        else if (change.type === `delete`) {
+          if (filterFn(change.value)) {
+            filteredChanges.push(change)
+          }
+        }
+      }
+      
+      if (filteredChanges.length > 0) {
+        originalCallback(filteredChanges)
+      }
     }
   }
 
