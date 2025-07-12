@@ -7,3 +7,6 @@ export * from "@tanstack/db"
 // Re-export some stuff explicitly to ensure the type & value is exported
 export type { Collection } from "@tanstack/db"
 export { createTransaction } from "@tanstack/db"
+
+// SSR Framework adapters
+export * from "./adapters/index.js"

@@ -11,6 +11,68 @@ import type {
 } from "@tanstack/db"
 
 /**
+ * SSR configuration options for useLiveQuery
+ */
+export interface SSROptions<TResult = any> {
+  /**
+   * Initial data to use for server-side rendering
+   */
+  initialData?: Array<TResult>
+  
+  /**
+   * Whether to enable SSR
+   */
+  enableSSR?: boolean
+  
+  /**
+   * Whether to defer sync until after hydration
+   */
+  deferSync?: boolean
+}
+
+/**
+ * Detect if we're in a server environment
+ */
+function isServerEnvironment(): boolean {
+  return typeof window === 'undefined'
+}
+
+/**
+ * Create a mock SSR response for server-side rendering
+ */
+function createSSRResponse<TResult>(
+  initialData: Array<TResult> = [],
+  status: CollectionStatus = 'ready'
+): {
+  state: Map<string | number, TResult>
+  data: Array<TResult>
+  collection: null
+  status: CollectionStatus
+  isLoading: boolean
+  isReady: boolean
+  isIdle: boolean
+  isError: boolean
+  isCleanedUp: boolean
+} {
+  const state = new Map<string | number, TResult>()
+  initialData.forEach((item, index) => {
+    state.set(index, item)
+  })
+
+  return {
+    state,
+    data: initialData,
+    collection: null,
+    status,
+    isLoading: status === 'loading' || status === 'initialCommit',
+    isReady: status === 'ready',
+    isIdle: status === 'idle',
+    isError: status === 'error',
+    isCleanedUp: status === 'cleaned-up',
+  }
+}
+
+/**
  * Create a live query using a query function
  * @param queryFn - Query function that defines what data to fetch
  * @param deps - Array of dependencies that trigger query re-execution when changed
@@ -67,7 +129,24 @@ export function useLiveQuery<TContext extends Context>(
 ): {
   state: Map<string | number, GetResult<TContext>>
   data: Array<GetResult<TContext>>
-  collection: Collection<GetResult<TContext>, string | number, {}>
+  collection: Collection<GetResult<TContext>, string | number, {}> | null
+  status: CollectionStatus
+  isLoading: boolean
+  isReady: boolean
+  isIdle: boolean
+  isError: boolean
+  isCleanedUp: boolean
+}
+
+// Overload 1b: Accept query function with SSR options
+export function useLiveQuery<TContext extends Context>(
+  queryFn: (q: InitialQueryBuilder) => QueryBuilder<TContext>,
+  deps: Array<unknown>,
+  ssrOptions: SSROptions<GetResult<TContext>>
+): {
+  state: Map<string | number, GetResult<TContext>>
+  data: Array<GetResult<TContext>>
+  collection: Collection<GetResult<TContext>, string | number, {}> | null
   status: CollectionStatus
   isLoading: boolean
   isReady: boolean
@@ -116,7 +195,24 @@ export function useLiveQuery<TContext extends Context>(
 ): {
   state: Map<string | number, GetResult<TContext>>
   data: Array<GetResult<TContext>>
-  collection: Collection<GetResult<TContext>, string | number, {}>
+  collection: Collection<GetResult<TContext>, string | number, {}> | null
+  status: CollectionStatus
+  isLoading: boolean
+  isReady: boolean
+  isIdle: boolean
+  isError: boolean
+  isCleanedUp: boolean
+}
+
+// Overload 2b: Accept config object with SSR options
+export function useLiveQuery<TContext extends Context>(
+  config: LiveQueryCollectionConfig<TContext>,
+  deps: Array<unknown>,
+  ssrOptions: SSROptions<GetResult<TContext>>
+): {
+  state: Map<string | number, GetResult<TContext>>
+  data: Array<GetResult<TContext>>
+  collection: Collection<GetResult<TContext>, string | number, {}> | null
   status: CollectionStatus
   isLoading: boolean
   isReady: boolean
@@ -164,7 +260,27 @@ export function useLiveQuery<
 ): {
   state: Map<TKey, TResult>
   data: Array<TResult>
-  collection: Collection<TResult, TKey, TUtils>
+  collection: Collection<TResult, TKey, TUtils> | null
+  status: CollectionStatus
+  isLoading: boolean
+  isReady: boolean
+  isIdle: boolean
+  isError: boolean
+  isCleanedUp: boolean
+}
+
+// Overload 3b: Accept pre-created live query collection with SSR options
+export function useLiveQuery<
+  TResult extends object,
+  TKey extends string | number,
+  TUtils extends Record<string, any>,
+>(
+  liveQueryCollection: Collection<TResult, TKey, TUtils>,
+  ssrOptions: SSROptions<TResult>
+): {
+  state: Map<TKey, TResult>
+  data: Array<TResult>
+  collection: Collection<TResult, TKey, TUtils> | null
   status: CollectionStatus
   isLoading: boolean
   isReady: boolean
@@ -176,8 +292,17 @@ export function useLiveQuery<
 // Implementation - use function overloads to infer the actual collection type
 export function useLiveQuery(
   configOrQueryOrCollection: any,
-  deps: Array<unknown> = []
+  deps: Array<unknown> = [],
+  ssrOptions?: SSROptions<any>
 ) {
+  // Handle SSR case
+  if (isServerEnvironment() && ssrOptions?.enableSSR) {
+    return createSSRResponse(
+      ssrOptions.initialData || [],
+      ssrOptions.initialData ? 'ready' : 'loading'
+    )
+  }
+
   // Check if it's already a collection by checking for specific collection methods
   const isCollection =
     configOrQueryOrCollection &&
@@ -203,21 +328,29 @@ export function useLiveQuery(
   if (needsNewCollection) {
     if (isCollection) {
       // It's already a collection, ensure sync is started for React hooks
-      configOrQueryOrCollection.startSyncImmediate()
+      // For client-side hydration, we might want to defer sync
+      if (ssrOptions?.deferSync && ssrOptions?.initialData) {
+        // Don't start sync immediately if we have initial data and want to defer
+        // This allows for smoother hydration
+      } else {
+        configOrQueryOrCollection.startSyncImmediate()
+      }
       collectionRef.current = configOrQueryOrCollection
       configRef.current = configOrQueryOrCollection
     } else {
       // Original logic for creating collections
-      // Ensure we always start sync for React hooks
+      // Ensure we always start sync for React hooks unless deferred
+      const shouldStartSync = !ssrOptions?.deferSync || !ssrOptions?.initialData
+      
       if (typeof configOrQueryOrCollection === `function`) {
         collectionRef.current = createLiveQueryCollection({
           query: configOrQueryOrCollection,
-          startSync: true,
+          startSync: shouldStartSync,
           gcTime: 0, // Live queries created by useLiveQuery are cleaned up immediately
         })
       } else {
         collectionRef.current = createLiveQueryCollection({
-          startSync: true,
+          startSync: shouldStartSync,
           gcTime: 0, // Live queries created by useLiveQuery are cleaned up immediately
           ...configOrQueryOrCollection,
         })
