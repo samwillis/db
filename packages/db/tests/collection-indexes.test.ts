@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest"
 import mitt from "mitt"
 import { createCollection } from "../src/collection"
 import { createTransaction } from "../src/transactions"
-import { eq, gt, gte, lt, lte } from "../src/query/builder/functions"
+import { eq, gt, gte, length, lt, lte } from "../src/query/builder/functions"
 import type { MutationFn, PendingMutation } from "../src/types"
 
 interface TestItem {
@@ -363,13 +363,14 @@ describe(`Collection Indexes`, () => {
 
     it(`should fall back to full scan for complex expressions`, () => {
       // This should work but use full scan since it's not a simple comparison
+      // Using a complex expression that can't be optimized with indexes
       const result = collection.currentStateAsChanges({
-        where: (row) => row.age % 2 === 0,
+        where: (row) => gt(length(row.name), 3),
       })
 
-      expect(result).toHaveLength(3) // ages 30, 28, 22
+      expect(result).toHaveLength(3) // Alice, Charlie, Diana (names longer than 3 chars)
       const names = result.map((r) => r.value.name).sort()
-      expect(names).toEqual([`Bob`, `Diana`, `Eve`])
+      expect(names).toEqual([`Alice`, `Charlie`, `Diana`])
     })
 
     it(`should verify index optimization is being used`, () => {
