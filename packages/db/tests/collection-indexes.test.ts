@@ -14,6 +14,105 @@ interface TestItem {
   createdAt: Date
 }
 
+// Index usage tracking utilities
+interface IndexUsageStats {
+  rangeQueryCalls: number
+  fullScanCalls: number
+  indexesUsed: Array<string>
+  queriesExecuted: Array<{
+    type: `index` | `fullScan`
+    operation?: string
+    field?: string
+    value?: any
+  }>
+}
+
+function createIndexUsageTracker(collection: any): {
+  stats: IndexUsageStats
+  restore: () => void
+} {
+  const stats: IndexUsageStats = {
+    rangeQueryCalls: 0,
+    fullScanCalls: 0,
+    indexesUsed: [],
+    queriesExecuted: [],
+  }
+
+  // Track rangeQuery calls (index usage)
+  const originalRangeQuery = collection.rangeQuery
+  collection.rangeQuery = function (index: any, operation: string, value: any) {
+    stats.rangeQueryCalls++
+    stats.indexesUsed.push(index.id)
+    stats.queriesExecuted.push({
+      type: `index`,
+      operation,
+      field: index.expression?.path?.join(`.`),
+      value,
+    })
+    return originalRangeQuery.call(this, index, operation, value)
+  }
+
+  // Track full scan calls (entries() iteration)
+  const originalEntries = collection.entries
+  collection.entries = function* () {
+    // Only count as full scan if we're in a filtering context
+    // Check the call stack to see if we're inside createFilterFunction
+    const stack = new Error().stack || ``
+    if (
+      stack.includes(`createFilterFunction`) ||
+      stack.includes(`currentStateAsChanges`)
+    ) {
+      stats.fullScanCalls++
+      stats.queriesExecuted.push({
+        type: `fullScan`,
+      })
+    }
+    yield* originalEntries.call(this)
+  }
+
+  const restore = () => {
+    collection.rangeQuery = originalRangeQuery
+    collection.entries = originalEntries
+  }
+
+  return { stats, restore }
+}
+
+// Helper to assert index usage
+function expectIndexUsage(
+  stats: IndexUsageStats,
+  expectations: {
+    shouldUseIndex: boolean
+    shouldUseFullScan?: boolean
+    indexCallCount?: number
+    fullScanCallCount?: number
+  }
+) {
+  if (expectations.shouldUseIndex) {
+    expect(stats.rangeQueryCalls).toBeGreaterThan(0)
+    expect(stats.indexesUsed.length).toBeGreaterThan(0)
+
+    if (expectations.indexCallCount !== undefined) {
+      expect(stats.rangeQueryCalls).toBe(expectations.indexCallCount)
+    }
+  } else {
+    expect(stats.rangeQueryCalls).toBe(0)
+    expect(stats.indexesUsed.length).toBe(0)
+  }
+
+  if (expectations.shouldUseFullScan !== undefined) {
+    if (expectations.shouldUseFullScan) {
+      expect(stats.fullScanCalls).toBeGreaterThan(0)
+
+      if (expectations.fullScanCallCount !== undefined) {
+        expect(stats.fullScanCalls).toBe(expectations.fullScanCallCount)
+      }
+    } else {
+      expect(stats.fullScanCalls).toBe(0)
+    }
+  }
+}
+
 describe(`Collection Indexes`, () => {
   let collection: ReturnType<typeof createCollection<TestItem, string>>
   let testData: Array<TestItem>
@@ -373,14 +472,8 @@ describe(`Collection Indexes`, () => {
       expect(names).toEqual([`Alice`, `Charlie`, `Diana`])
     })
 
-    it(`should verify index optimization is being used`, () => {
-      // Create a spy to track range queries (index usage)
-      const originalRangeQuery = (collection as any).rangeQuery
-      let rangeQueryCalled = false
-      ;(collection as any).rangeQuery = function (...args: Array<any>) {
-        rangeQueryCalled = true
-        return originalRangeQuery.apply(this, args)
-      }
+    it(`should verify index optimization is being used for simple queries`, () => {
+      const tracker = createIndexUsageTracker(collection as any)
 
       try {
         // This should use index optimization
@@ -390,10 +483,213 @@ describe(`Collection Indexes`, () => {
 
         expect(result).toHaveLength(1)
         expect(result[0]?.value.name).toBe(`Alice`)
-        expect(rangeQueryCalled).toBe(true) // Verify index was used
+
+        // Verify 100% index usage, no full scan
+        expectIndexUsage(tracker.stats, {
+          shouldUseIndex: true,
+          shouldUseFullScan: false,
+          indexCallCount: 1,
+          fullScanCallCount: 0,
+        })
+
+        // Verify the specific index was used
+        expect(tracker.stats.indexesUsed[0]).toMatch(/^index_\d+$/)
+        expect(tracker.stats.queriesExecuted[0]).toMatchObject({
+          type: `index`,
+          operation: `eq`,
+          field: `age`,
+          value: 25,
+        })
       } finally {
-        // Restore original method
-        ;(collection as any).rangeQuery = originalRangeQuery
+        tracker.restore()
+      }
+    })
+
+    it(`should verify different range operations use indexes`, () => {
+      const tracker = createIndexUsageTracker(collection as any)
+
+      try {
+        // Test multiple range operations
+        const eqResult = collection.currentStateAsChanges({
+          where: (row) => eq(row.age, 25),
+        })
+        const gtResult = collection.currentStateAsChanges({
+          where: (row) => gt(row.age, 30),
+        })
+        const lteResult = collection.currentStateAsChanges({
+          where: (row) => lte(row.age, 28),
+        })
+
+        expect(eqResult).toHaveLength(1)
+        expect(gtResult).toHaveLength(1) // Charlie (35)
+        expect(lteResult).toHaveLength(3) // Alice (25), Diana (28), Eve (22)
+
+        // Should have used index 3 times, no full scans
+        expectIndexUsage(tracker.stats, {
+          shouldUseIndex: true,
+          shouldUseFullScan: false,
+          indexCallCount: 3,
+          fullScanCallCount: 0,
+        })
+
+        // Verify all operations used indexes
+        expect(tracker.stats.queriesExecuted).toHaveLength(3)
+        expect(tracker.stats.queriesExecuted[0]).toMatchObject({
+          type: `index`,
+          operation: `eq`,
+        })
+        expect(tracker.stats.queriesExecuted[1]).toMatchObject({
+          type: `index`,
+          operation: `gt`,
+        })
+        expect(tracker.stats.queriesExecuted[2]).toMatchObject({
+          type: `index`,
+          operation: `lte`,
+        })
+      } finally {
+        tracker.restore()
+      }
+    })
+
+    it(`should verify complex expressions fall back to full scan`, () => {
+      const tracker = createIndexUsageTracker(collection as any)
+
+      try {
+        // This should fall back to full scan
+        const result = collection.currentStateAsChanges({
+          where: (row) => gt(length(row.name), 3),
+        })
+
+        expect(result).toHaveLength(3) // Alice, Charlie, Diana
+
+        // Should use full scan, no index
+        expectIndexUsage(tracker.stats, {
+          shouldUseIndex: false,
+          shouldUseFullScan: true,
+          indexCallCount: 0,
+          fullScanCallCount: 1,
+        })
+
+        expect(tracker.stats.queriesExecuted[0]).toMatchObject({
+          type: `fullScan`,
+        })
+      } finally {
+        tracker.restore()
+      }
+    })
+
+    it(`should verify queries without matching indexes use full scan`, () => {
+      const tracker = createIndexUsageTracker(collection as any)
+
+      try {
+        // Query on a field without an index (status)
+        const result = collection.currentStateAsChanges({
+          where: (row) => eq(row.status, `active`),
+        })
+
+        expect(result).toHaveLength(3) // Alice, Charlie, Eve
+
+        // Should use full scan since no status index exists
+        expectIndexUsage(tracker.stats, {
+          shouldUseIndex: false,
+          shouldUseFullScan: true,
+          indexCallCount: 0,
+          fullScanCallCount: 1,
+        })
+      } finally {
+        tracker.restore()
+      }
+    })
+  })
+
+  describe(`Index Usage Verification`, () => {
+    it(`should track multiple indexes and their usage patterns`, () => {
+      // Create multiple indexes
+      collection.createIndex((row) => row.age, {
+        name: `ageIndex`,
+      })
+      collection.createIndex((row) => row.status, {
+        name: `statusIndex`,
+      })
+      collection.createIndex((row) => row.name, {
+        name: `nameIndex`,
+      })
+
+      const tracker = createIndexUsageTracker(collection as any)
+
+      try {
+        // Query using age index
+        const ageQuery = collection.currentStateAsChanges({
+          where: (row) => gte(row.age, 30),
+        })
+
+        // Query using status index
+        const statusQuery = collection.currentStateAsChanges({
+          where: (row) => eq(row.status, `active`),
+        })
+
+        // Query using name index
+        const nameQuery = collection.currentStateAsChanges({
+          where: (row) => eq(row.name, `Alice`),
+        })
+
+        expect(ageQuery).toHaveLength(2) // Bob (30), Charlie (35)
+        expect(statusQuery).toHaveLength(3) // Alice, Charlie, Eve
+        expect(nameQuery).toHaveLength(1) // Alice
+
+        // Verify all queries used indexes
+        expectIndexUsage(tracker.stats, {
+          shouldUseIndex: true,
+          shouldUseFullScan: false,
+          indexCallCount: 3,
+          fullScanCallCount: 0,
+        })
+
+        // Verify specific indexes were used
+        expect(tracker.stats.indexesUsed).toHaveLength(3)
+        expect(tracker.stats.queriesExecuted).toEqual([
+          { type: `index`, operation: `gte`, field: `age`, value: 30 },
+          { type: `index`, operation: `eq`, field: `status`, value: `active` },
+          { type: `index`, operation: `eq`, field: `name`, value: `Alice` },
+        ])
+
+        // Test that we can identify which specific index was used
+        const usedIndexes = new Set(tracker.stats.indexesUsed)
+        expect(usedIndexes.size).toBe(3) // Three different indexes used
+      } finally {
+        tracker.restore()
+      }
+    })
+
+    it(`should verify 100% index usage for subscriptions`, () => {
+      collection.createIndex((row) => row.status)
+
+      const tracker = createIndexUsageTracker(collection as any)
+      const changes: Array<any> = []
+
+      try {
+        // Subscribe with a where clause that should use index
+        const unsubscribe = collection.subscribeChanges(
+          (items) => changes.push(...items),
+          {
+            includeInitialState: true,
+            where: (row) => eq(row.status, `active`),
+          }
+        )
+
+        expect(changes).toHaveLength(3) // Initial active items
+
+        // Verify initial state query used index
+        expectIndexUsage(tracker.stats, {
+          shouldUseIndex: true,
+          shouldUseFullScan: false,
+          indexCallCount: 1,
+          fullScanCallCount: 0,
+        })
+
+        unsubscribe()
+      } finally {
+        tracker.restore()
       }
     })
   })
