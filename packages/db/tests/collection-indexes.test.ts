@@ -412,64 +412,148 @@ describe(`Collection Indexes`, () => {
     })
 
     it(`should perform equality queries`, () => {
-      const result = collection.currentStateAsChanges({
-        where: (row) => eq(row.age, 25),
-      })
+      const tracker = createIndexUsageTracker(collection as any)
 
-      expect(result).toHaveLength(1)
-      expect(result[0]?.value.name).toBe(`Alice`)
+      try {
+        const result = collection.currentStateAsChanges({
+          where: (row) => eq(row.age, 25),
+        })
+
+        expect(result).toHaveLength(1)
+        expect(result[0]?.value.name).toBe(`Alice`)
+
+        // Verify 100% index usage
+        expectIndexUsage(tracker.stats, {
+          shouldUseIndex: true,
+          shouldUseFullScan: false,
+          indexCallCount: 1,
+          fullScanCallCount: 0,
+        })
+      } finally {
+        tracker.restore()
+      }
     })
 
     it(`should perform greater than queries`, () => {
-      const result = collection.currentStateAsChanges({
-        where: (row) => gt(row.age, 28),
-      })
+      const tracker = createIndexUsageTracker(collection as any)
 
-      expect(result).toHaveLength(2)
-      const names = result.map((r) => r.value.name).sort()
-      expect(names).toEqual([`Bob`, `Charlie`])
+      try {
+        const result = collection.currentStateAsChanges({
+          where: (row) => gt(row.age, 28),
+        })
+
+        expect(result).toHaveLength(2)
+        const names = result.map((r) => r.value.name).sort()
+        expect(names).toEqual([`Bob`, `Charlie`])
+
+        // Verify 100% index usage
+        expectIndexUsage(tracker.stats, {
+          shouldUseIndex: true,
+          shouldUseFullScan: false,
+          indexCallCount: 1,
+          fullScanCallCount: 0,
+        })
+      } finally {
+        tracker.restore()
+      }
     })
 
     it(`should perform greater than or equal queries`, () => {
-      const result = collection.currentStateAsChanges({
-        where: (row) => gte(row.age, 28),
-      })
+      const tracker = createIndexUsageTracker(collection as any)
 
-      expect(result).toHaveLength(3)
-      const names = result.map((r) => r.value.name).sort()
-      expect(names).toEqual([`Bob`, `Charlie`, `Diana`])
+      try {
+        const result = collection.currentStateAsChanges({
+          where: (row) => gte(row.age, 28),
+        })
+
+        expect(result).toHaveLength(3)
+        const names = result.map((r) => r.value.name).sort()
+        expect(names).toEqual([`Bob`, `Charlie`, `Diana`])
+
+        // Verify 100% index usage
+        expectIndexUsage(tracker.stats, {
+          shouldUseIndex: true,
+          shouldUseFullScan: false,
+          indexCallCount: 1,
+          fullScanCallCount: 0,
+        })
+      } finally {
+        tracker.restore()
+      }
     })
 
     it(`should perform less than queries`, () => {
-      const result = collection.currentStateAsChanges({
-        where: (row) => lt(row.age, 28),
-      })
+      const tracker = createIndexUsageTracker(collection as any)
 
-      expect(result).toHaveLength(2)
-      const names = result.map((r) => r.value.name).sort()
-      expect(names).toEqual([`Alice`, `Eve`])
+      try {
+        const result = collection.currentStateAsChanges({
+          where: (row) => lt(row.age, 28),
+        })
+
+        expect(result).toHaveLength(2)
+        const names = result.map((r) => r.value.name).sort()
+        expect(names).toEqual([`Alice`, `Eve`])
+
+        // Verify 100% index usage
+        expectIndexUsage(tracker.stats, {
+          shouldUseIndex: true,
+          shouldUseFullScan: false,
+          indexCallCount: 1,
+          fullScanCallCount: 0,
+        })
+      } finally {
+        tracker.restore()
+      }
     })
 
     it(`should perform less than or equal queries`, () => {
-      const result = collection.currentStateAsChanges({
-        where: (row) => lte(row.age, 28),
-      })
+      const tracker = createIndexUsageTracker(collection as any)
 
-      expect(result).toHaveLength(3)
-      const names = result.map((r) => r.value.name).sort()
-      expect(names).toEqual([`Alice`, `Diana`, `Eve`])
+      try {
+        const result = collection.currentStateAsChanges({
+          where: (row) => lte(row.age, 28),
+        })
+
+        expect(result).toHaveLength(3)
+        const names = result.map((r) => r.value.name).sort()
+        expect(names).toEqual([`Alice`, `Diana`, `Eve`])
+
+        // Verify 100% index usage
+        expectIndexUsage(tracker.stats, {
+          shouldUseIndex: true,
+          shouldUseFullScan: false,
+          indexCallCount: 1,
+          fullScanCallCount: 0,
+        })
+      } finally {
+        tracker.restore()
+      }
     })
 
     it(`should fall back to full scan for complex expressions`, () => {
-      // This should work but use full scan since it's not a simple comparison
-      // Using a complex expression that can't be optimized with indexes
-      const result = collection.currentStateAsChanges({
-        where: (row) => gt(length(row.name), 3),
-      })
+      const tracker = createIndexUsageTracker(collection as any)
 
-      expect(result).toHaveLength(3) // Alice, Charlie, Diana (names longer than 3 chars)
-      const names = result.map((r) => r.value.name).sort()
-      expect(names).toEqual([`Alice`, `Charlie`, `Diana`])
+      try {
+        // This should work but use full scan since it's not a simple comparison
+        // Using a complex expression that can't be optimized with indexes
+        const result = collection.currentStateAsChanges({
+          where: (row) => gt(length(row.name), 3),
+        })
+
+        expect(result).toHaveLength(3) // Alice, Charlie, Diana (names longer than 3 chars)
+        const names = result.map((r) => r.value.name).sort()
+        expect(names).toEqual([`Alice`, `Charlie`, `Diana`])
+
+        // Verify full scan is used, no index
+        expectIndexUsage(tracker.stats, {
+          shouldUseIndex: false,
+          shouldUseFullScan: true,
+          indexCallCount: 0,
+          fullScanCallCount: 1,
+        })
+      } finally {
+        tracker.restore()
+      }
     })
 
     it(`should verify index optimization is being used for simple queries`, () => {
@@ -701,106 +785,132 @@ describe(`Collection Indexes`, () => {
     })
 
     it(`should subscribe to filtered changes with index optimization`, async () => {
+      const tracker = createIndexUsageTracker(collection as any)
       const changes: Array<any> = []
 
-      const unsubscribe = collection.subscribeChanges(
-        (items) => {
-          changes.push(...items)
-        },
-        {
-          includeInitialState: true,
-          where: (row) => eq(row.status, `active`),
-        }
-      )
+      try {
+        const unsubscribe = collection.subscribeChanges(
+          (items) => {
+            changes.push(...items)
+          },
+          {
+            includeInitialState: true,
+            where: (row) => eq(row.status, `active`),
+          }
+        )
 
-      expect(changes).toHaveLength(3) // Initial active items
-      expect(changes.map((c) => c.value.name).sort()).toEqual([
-        `Alice`,
-        `Charlie`,
-        `Eve`,
-      ])
+        expect(changes).toHaveLength(3) // Initial active items
+        expect(changes.map((c) => c.value.name).sort()).toEqual([
+          `Alice`,
+          `Charlie`,
+          `Eve`,
+        ])
 
-      // Add a new active item
-      changes.length = 0
-      const tx1 = createTransaction({ mutationFn })
-      tx1.mutate(() =>
-        collection.insert({
-          id: `6`,
-          name: `Frank`,
-          age: 40,
-          status: `active`,
-          createdAt: new Date(),
+        // Verify initial state query used index
+        expectIndexUsage(tracker.stats, {
+          shouldUseIndex: true,
+          shouldUseFullScan: false,
+          indexCallCount: 1,
+          fullScanCallCount: 0,
         })
-      )
-      await tx1.isPersisted.promise
 
-      expect(changes).toHaveLength(1)
-      expect(changes[0]?.value.name).toBe(`Frank`)
+        // Add a new active item
+        changes.length = 0
+        const tx1 = createTransaction({ mutationFn })
+        tx1.mutate(() =>
+          collection.insert({
+            id: `6`,
+            name: `Frank`,
+            age: 40,
+            status: `active`,
+            createdAt: new Date(),
+          })
+        )
+        await tx1.isPersisted.promise
 
-      // Add an inactive item (should not trigger)
-      changes.length = 0
-      const tx2 = createTransaction({ mutationFn })
-      tx2.mutate(() =>
-        collection.insert({
-          id: `7`,
-          name: `Grace`,
-          age: 35,
-          status: `inactive`,
-          createdAt: new Date(),
-        })
-      )
-      await tx2.isPersisted.promise
+        expect(changes).toHaveLength(1)
+        expect(changes[0]?.value.name).toBe(`Frank`)
 
-      expect(changes).toHaveLength(0)
+        // Add an inactive item (should not trigger)
+        changes.length = 0
+        const tx2 = createTransaction({ mutationFn })
+        tx2.mutate(() =>
+          collection.insert({
+            id: `7`,
+            name: `Grace`,
+            age: 35,
+            status: `inactive`,
+            createdAt: new Date(),
+          })
+        )
+        await tx2.isPersisted.promise
 
-      // Change an active item to inactive (should not trigger because item no longer matches)
-      changes.length = 0
-      const tx3 = createTransaction({ mutationFn })
-      tx3.mutate(() =>
-        collection.update(`1`, (draft) => {
-          draft.status = `inactive`
-        })
-      )
-      await tx3.isPersisted.promise
+        expect(changes).toHaveLength(0)
 
-      expect(changes).toHaveLength(0) // No longer matches filter
+        // Change an active item to inactive (should not trigger because item no longer matches)
+        changes.length = 0
+        const tx3 = createTransaction({ mutationFn })
+        tx3.mutate(() =>
+          collection.update(`1`, (draft) => {
+            draft.status = `inactive`
+          })
+        )
+        await tx3.isPersisted.promise
 
-      unsubscribe()
+        expect(changes).toHaveLength(0) // No longer matches filter
+
+        unsubscribe()
+      } finally {
+        tracker.restore()
+      }
     })
 
     it(`should handle range queries in subscriptions`, async () => {
+      const tracker = createIndexUsageTracker(collection as any)
       const changes: Array<any> = []
 
-      const unsubscribe = collection.subscribeChanges(
-        (items) => {
-          changes.push(...items)
-        },
-        {
-          includeInitialState: true,
-          where: (row) => gte(row.age, 30),
-        }
-      )
+      try {
+        const unsubscribe = collection.subscribeChanges(
+          (items) => {
+            changes.push(...items)
+          },
+          {
+            includeInitialState: true,
+            where: (row) => gte(row.age, 30),
+          }
+        )
 
-      expect(changes).toHaveLength(2) // Bob (30) and Charlie (35)
-      expect(changes.map((c) => c.value.name).sort()).toEqual([
-        `Bob`,
-        `Charlie`,
-      ])
+        expect(changes).toHaveLength(2) // Bob (30) and Charlie (35)
+        expect(changes.map((c) => c.value.name).sort()).toEqual([
+          `Bob`,
+          `Charlie`,
+        ])
 
-      // Update someone to be over 30
-      changes.length = 0
-      const tx = createTransaction({ mutationFn })
-      tx.mutate(() =>
-        collection.update(`4`, (draft) => {
-          draft.age = 32
+        // Verify initial state query used index
+        expectIndexUsage(tracker.stats, {
+          shouldUseIndex: true,
+          shouldUseFullScan: false,
+          indexCallCount: 1,
+          fullScanCallCount: 0,
         })
-      )
-      await tx.isPersisted.promise
 
-      expect(changes).toHaveLength(1)
-      expect(changes[0]?.value.name).toBe(`Diana`)
+        // Update someone to be over 30
+        changes.length = 0
+        const tx = createTransaction({ mutationFn })
+        tx.mutate(() =>
+          collection.update(`4`, (draft) => {
+            draft.age = 32
+          })
+        )
+        await tx.isPersisted.promise
 
-      unsubscribe()
+        expect(changes).toHaveLength(1)
+        expect(changes[0]?.value.name).toBe(`Diana`)
+
+        unsubscribe()
+      } finally {
+        tracker.restore()
+      }
     })
 
     it(`should handle subscription updates correctly`, async () => {
