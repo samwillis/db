@@ -29,6 +29,20 @@
  * ### 4. Subquery Creation
  * Lifts single-source WHERE clauses into subqueries that wrap the original table references.
  *
+ * ## Safety & Edge Cases
+ *
+ * The optimizer includes comprehensive safety checks to prevent predicate pushdown when it could
+ * break query semantics. Optimization is **blocked** for subqueries with:
+ *
+ * - **Aggregates**: GROUP BY, HAVING, or aggregate functions in SELECT (would change aggregation)
+ * - **Ordering + Limits**: ORDER BY combined with LIMIT/OFFSET (would change result set)
+ * - **Functional Operations**: fnSelect, fnWhere, fnHaving (potential side effects)
+ *
+ * **Safe cases** that are optimized: plain SELECT, ORDER BY without LIMIT, simple projections.
+ *
+ * The optimizer tracks which clauses were actually optimized and only removes those from the
+ * main query. Subquery reuse is handled safely through immutable query copies.
+ *
  * ## Example Optimization
  *
  * **Original Query:**
@@ -63,6 +77,7 @@
  * - **Better Performance**: Smaller datasets lead to faster query execution
  * - **Automatic Optimization**: No manual query rewriting required
  * - **Preserves Semantics**: Optimized queries return identical results
+ * - **Safe by Design**: Comprehensive checks prevent semantic-breaking optimizations
  *
  * ## Integration
  *
