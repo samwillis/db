@@ -720,8 +720,16 @@ export class CollectionImpl<
         return true
       })
 
+      // Update indexes for the filtered events
+      if (filteredEvents.length > 0) {
+        this.updateIndexes(filteredEvents)
+      }
       this.emitEvents(filteredEvents)
     } else {
+      // Update indexes for all events
+      if (filteredEventsBySyncStatus.length > 0) {
+        this.updateIndexes(filteredEventsBySyncStatus)
+      }
       // Emit all events if no pending sync transactions
       this.emitEvents(filteredEventsBySyncStatus)
     }
@@ -808,11 +816,6 @@ export class CollectionImpl<
     changes: Array<ChangeMessage<T, TKey>>,
     endBatching = false
   ): void {
-    // Update indexes for all changes before any other processing
-    if (changes.length > 0) {
-      this.updateIndexes(changes)
-    }
-
     if (this.shouldBatchEvents && !endBatching) {
       // Add events to the batch
       this.batchedEvents.push(...changes)
@@ -1169,6 +1172,11 @@ export class CollectionImpl<
 
       // Update cached size after synced data changes
       this._size = this.calculateSize()
+
+      // Update indexes for all events before emitting
+      if (events.length > 0) {
+        this.updateIndexes(events)
+      }
 
       // End batching and emit all events (combines any batched events with sync events)
       this.emitEvents(events, true)
