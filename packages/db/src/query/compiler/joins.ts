@@ -21,6 +21,11 @@ import type {
 type QueryCache = WeakMap<QueryIR, ResultStream>
 
 /**
+ * Mapping from optimized queries back to their original queries for caching
+ */
+type QueryMapping = WeakMap<QueryIR, QueryIR>
+
+/**
  * Processes all join clauses in a query
  */
 export function processJoins(
@@ -29,7 +34,8 @@ export function processJoins(
   tables: Record<string, KeyedStream>,
   mainTableAlias: string,
   allInputs: Record<string, KeyedStream>,
-  cache: QueryCache
+  cache: QueryCache,
+  queryMapping: QueryMapping
 ): NamespacedAndKeyedStream {
   let resultPipeline = pipeline
 
@@ -40,7 +46,8 @@ export function processJoins(
       tables,
       mainTableAlias,
       allInputs,
-      cache
+      cache,
+      queryMapping
     )
   }
 
@@ -56,13 +63,15 @@ function processJoin(
   tables: Record<string, KeyedStream>,
   mainTableAlias: string,
   allInputs: Record<string, KeyedStream>,
-  cache: QueryCache
+  cache: QueryCache,
+  queryMapping: QueryMapping
 ): NamespacedAndKeyedStream {
   // Get the joined table alias and input stream
   const { alias: joinedTableAlias, input: joinedInput } = processJoinSource(
     joinClause.from,
     allInputs,
-    cache
+    cache,
+    queryMapping
   )
 
   // Add the joined table to the tables map
@@ -128,7 +137,8 @@ function processJoin(
 function processJoinSource(
   from: CollectionRef | QueryRef,
   allInputs: Record<string, KeyedStream>,
-  cache: QueryCache
+  cache: QueryCache,
+  queryMapping: QueryMapping
 ): { alias: string; input: KeyedStream } {
   switch (from.type) {
     case `collectionRef`: {
@@ -141,8 +151,16 @@ function processJoinSource(
       return { alias: from.alias, input }
     }
     case `queryRef`: {
+      // Find the original query for caching purposes
+      const originalQuery = queryMapping.get(from.query) || from.query
+
       // Recursively compile the sub-query with cache
-      const subQueryInput = compileQuery(from.query, allInputs, cache)
+      const subQueryInput = compileQuery(
+        originalQuery,
+        allInputs,
+        cache,
+        queryMapping
+      )
 
       // Subqueries may return [key, [value, orderByIndex]] (with ORDER BY) or [key, value] (without ORDER BY)
       // We need to extract just the value for use in parent queries

@@ -18,16 +18,23 @@ import type {
 type QueryCache = WeakMap<QueryIR, ResultStream>
 
 /**
+ * Mapping from optimized queries back to their original queries for caching
+ */
+type QueryMapping = WeakMap<QueryIR, QueryIR>
+
+/**
  * Compiles a query2 IR into a D2 pipeline
  * @param rawQuery The query IR to compile
  * @param inputs Mapping of collection names to input streams
  * @param cache Optional cache for compiled subqueries (used internally for recursion)
+ * @param queryMapping Optional mapping from optimized queries to original queries
  * @returns A stream builder representing the compiled query
  */
 export function compileQuery(
   rawQuery: QueryIR,
   inputs: Record<string, KeyedStream>,
-  cache: QueryCache = new WeakMap()
+  cache: QueryCache = new WeakMap(),
+  queryMapping: QueryMapping = new WeakMap()
 ): ResultStream {
   // Check if the original raw query has already been compiled
   const cachedResult = cache.get(rawQuery)
@@ -37,6 +44,10 @@ export function compileQuery(
 
   // Optimize the query before compilation
   const query = optimizeQuery(rawQuery)
+
+  // Create mapping from optimized query to original for caching
+  queryMapping.set(query, rawQuery)
+  mapNestedQueries(query, rawQuery, queryMapping)
 
   // Create a copy of the inputs map to avoid modifying the original
   const allInputs = { ...inputs }
@@ -48,7 +59,8 @@ export function compileQuery(
   const { alias: mainTableAlias, input: mainInput } = processFrom(
     query.from,
     allInputs,
-    cache
+    cache,
+    queryMapping
   )
   tables[mainTableAlias] = mainInput
 
@@ -72,7 +84,8 @@ export function compileQuery(
       tables,
       mainTableAlias,
       allInputs,
-      cache
+      cache,
+      queryMapping
     )
   }
 
@@ -247,7 +260,8 @@ export function compileQuery(
 function processFrom(
   from: CollectionRef | QueryRef,
   allInputs: Record<string, KeyedStream>,
-  cache: QueryCache
+  cache: QueryCache,
+  queryMapping: QueryMapping
 ): { alias: string; input: KeyedStream } {
   switch (from.type) {
     case `collectionRef`: {
@@ -260,8 +274,16 @@ function processFrom(
       return { alias: from.alias, input }
     }
     case `queryRef`: {
+      // Find the original query for caching purposes
+      const originalQuery = queryMapping.get(from.query) || from.query
+
       // Recursively compile the sub-query with cache
-      const subQueryInput = compileQuery(from.query, allInputs, cache)
+      const subQueryInput = compileQuery(
+        originalQuery,
+        allInputs,
+        cache,
+        queryMapping
+      )
 
       // Subqueries may return [key, [value, orderByIndex]] (with ORDER BY) or [key, value] (without ORDER BY)
       // We need to extract just the value for use in parent queries
@@ -276,5 +298,57 @@ function processFrom(
     }
     default:
       throw new Error(`Unsupported FROM type: ${(from as any).type}`)
+  }
+}
+
+/**
+ * Recursively maps optimized subqueries to their original queries for proper caching.
+ * This ensures that when we encounter the same QueryRef object in different contexts,
+ * we can find the original query to check the cache.
+ */
+function mapNestedQueries(
+  optimizedQuery: QueryIR,
+  originalQuery: QueryIR,
+  queryMapping: QueryMapping
+): void {
+  // Map the FROM clause if it's a QueryRef
+  if (
+    optimizedQuery.from.type === `queryRef` &&
+    originalQuery.from.type === `queryRef`
+  ) {
+    queryMapping.set(optimizedQuery.from.query, originalQuery.from.query)
+    // Recursively map nested queries
+    mapNestedQueries(
+      optimizedQuery.from.query,
+      originalQuery.from.query,
+      queryMapping
+    )
+  }
+
+  // Map JOIN clauses if they exist
+  if (optimizedQuery.join && originalQuery.join) {
+    for (
+      let i = 0;
+      i < optimizedQuery.join.length && i < originalQuery.join.length;
+      i++
+    ) {
+      const optimizedJoin = optimizedQuery.join[i]
+      const originalJoin = originalQuery.join[i]
+
+      if (optimizedJoin && originalJoin) {
+        if (
+          optimizedJoin.from.type === `queryRef` &&
+          originalJoin.from.type === `queryRef`
+        ) {
+          queryMapping.set(optimizedJoin.from.query, originalJoin.from.query)
+          // Recursively map nested queries in joins
+          mapNestedQueries(
+            optimizedJoin.from.query,
+            originalJoin.from.query,
+            queryMapping
+          )
+        }
+      }
+    }
   }
 }
