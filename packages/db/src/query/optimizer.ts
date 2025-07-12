@@ -31,20 +31,26 @@
  *
  * ## Safety & Edge Cases
  *
- * The optimizer includes comprehensive safety checks to prevent predicate pushdown when it could
- * break query semantics. Optimization is **blocked** for subqueries with:
+ * The optimizer includes targeted safety checks to prevent predicate pushdown when it could
+ * break query semantics:
  *
+ * ### Always Safe Operations
+ * - **Creating new subqueries**: Wrapping collection references in subqueries with WHERE clauses
+ * - **Main query optimizations**: Moving single-source WHERE clauses from main query to subqueries
+ * - **Queries with aggregates/ORDER BY/HAVING**: Can still create new filtered subqueries
+ *
+ * ### Unsafe Operations (blocked by safety checks)
+ * Pushing WHERE clauses **into existing subqueries** that have:
  * - **Aggregates**: GROUP BY, HAVING, or aggregate functions in SELECT (would change aggregation)
  * - **Ordering + Limits**: ORDER BY combined with LIMIT/OFFSET (would change result set)
  * - **Functional Operations**: fnSelect, fnWhere, fnHaving (potential side effects)
  *
- * **Safe cases** that are optimized: plain SELECT, ORDER BY without LIMIT, simple projections.
- *
  * The optimizer tracks which clauses were actually optimized and only removes those from the
  * main query. Subquery reuse is handled safely through immutable query copies.
  *
- * ## Example Optimization
+ * ## Example Optimizations
  *
+ * ### Basic Query with Joins
  * **Original Query:**
  * ```javascript
  * query
@@ -69,6 +75,30 @@
  *       .where(({posts}) => gt(posts.views, 100))
  *   }, ({users, posts}) => eq(users.id, posts.user_id))
  *   .where(({users, posts}) => eq(users.id, posts.author_id))
+ * ```
+ *
+ * ### Query with Aggregates (Now Optimizable!)
+ * **Original Query:**
+ * ```javascript
+ * query
+ *   .from({ users: usersCollection })
+ *   .join({ posts: postsCollection }, ({users, posts}) => eq(users.id, posts.user_id))
+ *   .where(({users}) => eq(users.department_id, 1))
+ *   .groupBy(['users.department_id'])
+ *   .select({ count: agg('count', '*') })
+ * ```
+ *
+ * **Optimized Query:**
+ * ```javascript
+ * query
+ *   .from({
+ *     users: subquery
+ *       .from({ users: usersCollection })
+ *       .where(({users}) => eq(users.department_id, 1))
+ *   })
+ *   .join({ posts: postsCollection }, ({users, posts}) => eq(users.id, posts.user_id))
+ *   .groupBy(['users.department_id'])
+ *   .select({ count: agg('count', '*') })
  * ```
  *
  * ## Benefits
@@ -585,6 +615,7 @@ function optimizeFromWithTracking(
 
   if (from.type === `collectionRef`) {
     // Create a new subquery with the WHERE clause for the collection
+    // This is always safe since we're creating a new subquery
     const subQuery: QueryIR = {
       from: new CollectionRefClass(from.collection, from.alias),
       where: [whereClause],
@@ -595,8 +626,10 @@ function optimizeFromWithTracking(
 
   // Must be queryRef due to type system
 
-  // SAFETY CHECK: Do not optimize subqueries that could have their semantics changed
-  if (!isSafeToOptimize(from.query)) {
+  // SAFETY CHECK: Only check safety when pushing WHERE clauses into existing subqueries
+  // We need to be careful about pushing WHERE clauses into subqueries that already have
+  // aggregates, HAVING, or ORDER BY + LIMIT since that could change their semantics
+  if (!isSafeToPushIntoExistingSubquery(from.query)) {
     // Return a copy without optimization to maintain immutability
     // Do NOT mark as optimized since we didn't actually optimize it
     return new QueryRefClass(deepCopyQuery(from.query), from.alias)
@@ -614,17 +647,20 @@ function optimizeFromWithTracking(
 }
 
 /**
- * Determines if a subquery is safe to optimize with predicate pushdown.
+ * Determines if it's safe to push WHERE clauses into an existing subquery.
  *
- * Predicate pushdown can break semantics in several cases:
+ * Pushing WHERE clauses into existing subqueries can break semantics in several cases:
  *
  * 1. **Aggregates**: Pushing predicates before GROUP BY changes what gets aggregated
  * 2. **ORDER BY + LIMIT/OFFSET**: Pushing predicates before sorting+limiting changes the result set
  * 3. **HAVING clauses**: These operate on aggregated data, predicates should not be pushed past them
  * 4. **Functional operations**: fnSelect, fnWhere, fnHaving could have side effects
  *
- * @param query - The subquery to check for safety
- * @returns True if the query is safe to optimize, false otherwise
+ * Note: This safety check only applies when pushing WHERE clauses into existing subqueries.
+ * Creating new subqueries from collection references is always safe.
+ *
+ * @param query - The existing subquery to check for safety
+ * @returns True if it's safe to push WHERE clauses into this subquery, false otherwise
  *
  * @example
  * ```typescript
@@ -638,7 +674,7 @@ function optimizeFromWithTracking(
  * { from: users, select: { id, name } }
  * ```
  */
-function isSafeToOptimize(query: QueryIR): boolean {
+function isSafeToPushIntoExistingSubquery(query: QueryIR): boolean {
   // Check for aggregates in SELECT clause
   if (query.select) {
     const hasAggregates = Object.values(query.select).some(
