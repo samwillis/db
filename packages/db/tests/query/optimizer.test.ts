@@ -712,4 +712,335 @@ describe(`Query Optimizer`, () => {
       }
     })
   })
+
+  describe(`Multi-Level Predicate Pushdown`, () => {
+    test(`should push WHERE clauses through 2 levels of nested subqueries`, () => {
+      // Create a 2-level nested query structure
+      const nestedQuery: QueryIR = {
+        from: new QueryRef(
+          {
+            from: new CollectionRef(mockCollection, `u`),
+            where: [createGt(createPropRef(`u`, `id`), createValue(10))],
+          },
+          `u`
+        ),
+        join: [
+          {
+            from: new CollectionRef(mockCollection, `p`),
+            type: `inner`,
+            left: createPropRef(`u`, `id`),
+            right: createPropRef(`p`, `user_id`),
+          },
+        ],
+        where: [createEq(createPropRef(`u`, `department_id`), createValue(1))],
+      }
+
+      const optimized = optimizeQuery(nestedQuery)
+
+      // The new WHERE clause should be pushed to the nested level
+      expect(optimized.where).toEqual([])
+      expect(optimized.from.type).toBe(`queryRef`)
+      if (optimized.from.type === `queryRef`) {
+        // Should have both WHERE clauses at the inner level
+        expect(optimized.from.query.where).toHaveLength(2)
+        expect(optimized.from.query.where).toContainEqual(
+          createGt(createPropRef(`u`, `id`), createValue(10))
+        )
+        expect(optimized.from.query.where).toContainEqual(
+          createEq(createPropRef(`u`, `department_id`), createValue(1))
+        )
+      }
+    })
+
+    test(`should handle deeply nested structures progressively`, () => {
+      // Create a deeply nested query structure
+      const deeplyNestedQuery: QueryIR = {
+        from: new QueryRef(
+          {
+            from: new QueryRef(
+              {
+                from: new CollectionRef(mockCollection, `u`),
+                where: [createGt(createPropRef(`u`, `id`), createValue(10))],
+              },
+              `u`
+            ),
+            where: [createLt(createPropRef(`u`, `age`), createValue(50))],
+          },
+          `u`
+        ),
+        join: [
+          {
+            from: new CollectionRef(mockCollection, `p`),
+            type: `inner`,
+            left: createPropRef(`u`, `id`),
+            right: createPropRef(`p`, `user_id`),
+          },
+        ],
+        where: [createEq(createPropRef(`u`, `department_id`), createValue(1))],
+      }
+
+      const optimized = optimizeQuery(deeplyNestedQuery)
+
+      // Should at least push the top-level WHERE clause down one level
+      expect(optimized.where).toEqual([])
+      expect(optimized.from.type).toBe(`queryRef`)
+      if (optimized.from.type === `queryRef`) {
+        const innerQuery = optimized.from.query
+        // The department_id clause should be pushed to this level
+        expect(innerQuery.where).toContainEqual(
+          createEq(createPropRef(`u`, `department_id`), createValue(1))
+        )
+
+        // The age clause should remain here or be pushed deeper
+        expect(innerQuery.where).toContainEqual(
+          createLt(createPropRef(`u`, `age`), createValue(50))
+        )
+      }
+    })
+
+    test(`should remove redundant subqueries after optimization`, () => {
+      // Create a query with redundant subqueries that become empty after optimization
+      const queryWithRedundantSubqueries: QueryIR = {
+        from: new QueryRef(
+          {
+            from: new QueryRef(
+              {
+                from: new CollectionRef(mockCollection, `u`),
+              },
+              `u`
+            ),
+          },
+          `u`
+        ),
+        join: [
+          {
+            from: new CollectionRef(mockCollection, `p`),
+            type: `inner`,
+            left: createPropRef(`u`, `id`),
+            right: createPropRef(`p`, `user_id`),
+          },
+        ],
+        where: [createEq(createPropRef(`u`, `department_id`), createValue(1))],
+      }
+
+      const optimized = optimizeQuery(queryWithRedundantSubqueries)
+
+      // Redundant nested subqueries should be removed, leaving a direct reference to the collection
+      expect(optimized.from.type).toBe(`queryRef`)
+      if (optimized.from.type === `queryRef`) {
+        expect(optimized.from.query.from.type).toBe(`collectionRef`)
+        expect(optimized.from.query.where).toHaveLength(1)
+        expect(optimized.from.query.where![0]).toEqual(
+          createEq(createPropRef(`u`, `department_id`), createValue(1))
+        )
+      }
+    })
+
+    test(`should handle mixed single-source and multi-source clauses in nested queries`, () => {
+      const nestedQuery: QueryIR = {
+        from: new QueryRef(
+          {
+            from: new CollectionRef(mockCollection, `u`),
+            where: [createGt(createPropRef(`u`, `age`), createValue(25))],
+          },
+          `u`
+        ),
+        join: [
+          {
+            from: new QueryRef(
+              {
+                from: new CollectionRef(mockCollection, `p`),
+                where: [createGt(createPropRef(`p`, `views`), createValue(50))],
+              },
+              `p`
+            ),
+            type: `inner`,
+            left: createPropRef(`u`, `id`),
+            right: createPropRef(`p`, `user_id`),
+          },
+        ],
+        where: [
+          createEq(createPropRef(`u`, `department_id`), createValue(1)), // Single-source
+          createEq(createPropRef(`u`, `id`), createPropRef(`p`, `author_id`)), // Multi-source
+          createGt(createPropRef(`p`, `rating`), createValue(4)), // Single-source
+        ],
+      }
+
+      const optimized = optimizeQuery(nestedQuery)
+
+      // Multi-source clause should remain in main query
+      expect(optimized.where).toHaveLength(1)
+      expect(optimized.where![0]).toEqual(
+        createEq(createPropRef(`u`, `id`), createPropRef(`p`, `author_id`))
+      )
+
+      // Single-source clauses should be pushed to their respective subqueries
+      expect(optimized.from.type).toBe(`queryRef`)
+      if (optimized.from.type === `queryRef`) {
+        expect(optimized.from.query.where).toHaveLength(2) // Original + new clause
+        expect(optimized.from.query.where).toContainEqual(
+          createGt(createPropRef(`u`, `age`), createValue(25))
+        )
+        expect(optimized.from.query.where).toContainEqual(
+          createEq(createPropRef(`u`, `department_id`), createValue(1))
+        )
+      }
+
+      expect(optimized.join).toHaveLength(1)
+      if (optimized.join && optimized.join.length > 0) {
+        const joinClause = optimized.join[0]!
+        expect(joinClause.from.type).toBe(`queryRef`)
+        if (joinClause.from.type === `queryRef`) {
+          expect(joinClause.from.query.where).toHaveLength(2) // Original + new clause
+          expect(joinClause.from.query.where).toContainEqual(
+            createGt(createPropRef(`p`, `views`), createValue(50))
+          )
+          expect(joinClause.from.query.where).toContainEqual(
+            createGt(createPropRef(`p`, `rating`), createValue(4))
+          )
+        }
+      }
+    })
+
+    test(`should preserve non-redundant subqueries with meaningful clauses`, () => {
+      const queryWithMeaningfulSubqueries: QueryIR = {
+        from: new QueryRef(
+          {
+            from: new QueryRef(
+              {
+                from: new CollectionRef(mockCollection, `u`),
+                where: [createGt(createPropRef(`u`, `id`), createValue(10))],
+              },
+              `u`
+            ),
+            select: { name: createPropRef(`u`, `name`) }, // This makes the subquery non-redundant
+          },
+          `u`
+        ),
+        join: [
+          {
+            from: new CollectionRef(mockCollection, `p`),
+            type: `inner`,
+            left: createPropRef(`u`, `id`),
+            right: createPropRef(`p`, `user_id`),
+          },
+        ],
+        where: [createEq(createPropRef(`u`, `department_id`), createValue(1))],
+      }
+
+      const optimized = optimizeQuery(queryWithMeaningfulSubqueries)
+
+      // Should preserve the subquery with SELECT clause and push WHERE clause down at least one level
+      expect(optimized.where).toEqual([])
+      expect(optimized.from.type).toBe(`queryRef`)
+      if (optimized.from.type === `queryRef`) {
+        expect(optimized.from.query.select).toBeDefined()
+        // The new WHERE clause should be pushed to this level or deeper
+        expect(optimized.from.query.where).toContainEqual(
+          createEq(createPropRef(`u`, `department_id`), createValue(1))
+        )
+      }
+    })
+
+    test(`should handle convergence detection to prevent infinite recursion`, () => {
+      // Create a query that should converge quickly
+      const simpleQuery: QueryIR = {
+        from: new CollectionRef(mockCollection, `u`),
+        join: [
+          {
+            from: new CollectionRef(mockCollection, `p`),
+            type: `inner`,
+            left: createPropRef(`u`, `id`),
+            right: createPropRef(`p`, `user_id`),
+          },
+        ],
+        where: [createEq(createPropRef(`u`, `department_id`), createValue(1))],
+      }
+
+      const optimized = optimizeQuery(simpleQuery)
+
+      // Should optimize without infinite recursion
+      expect(optimized).toBeDefined()
+      expect(optimized.where).toEqual([])
+      expect(optimized.from.type).toBe(`queryRef`)
+    })
+
+    test(`should respect maximum recursion depth`, () => {
+      // This test would be hard to trigger naturally, but we can at least verify
+      // the function doesn't crash with deeply nested structures
+      let deepQuery: QueryIR = {
+        from: new CollectionRef(mockCollection, `u`),
+      }
+
+      // Create a very deeply nested structure
+      for (let i = 0; i < 15; i++) {
+        deepQuery = {
+          from: new QueryRef(deepQuery, `u`),
+        }
+      }
+
+      // Add JOIN and WHERE to make it optimizable
+      deepQuery.join = [
+        {
+          from: new CollectionRef(mockCollection, `p`),
+          type: `inner`,
+          left: createPropRef(`u`, `id`),
+          right: createPropRef(`p`, `user_id`),
+        },
+      ]
+      deepQuery.where = [
+        createEq(createPropRef(`u`, `department_id`), createValue(1)),
+      ]
+
+      const optimized = optimizeQuery(deepQuery)
+
+      // Should not crash and should produce a valid result
+      expect(optimized).toBeDefined()
+    })
+
+    test(`should handle complex AND/OR expressions with single-level pushdown`, () => {
+      const complexQuery: QueryIR = {
+        from: new QueryRef(
+          {
+            from: new CollectionRef(mockCollection, `u`),
+            where: [createGt(createPropRef(`u`, `age`), createValue(18))],
+          },
+          `u`
+        ),
+        join: [
+          {
+            from: new CollectionRef(mockCollection, `p`),
+            type: `inner`,
+            left: createPropRef(`u`, `id`),
+            right: createPropRef(`p`, `user_id`),
+          },
+        ],
+        where: [
+          createAnd(
+            createEq(createPropRef(`u`, `department_id`), createValue(1)),
+            createOr(
+              createGt(createPropRef(`u`, `salary`), createValue(50000)),
+              createEq(createPropRef(`u`, `role`), createValue(`manager`))
+            )
+          ),
+        ],
+      }
+
+      const optimized = optimizeQuery(complexQuery)
+
+      // AND clause should be split and single-source parts pushed down
+      expect(optimized.where).toEqual([])
+      expect(optimized.from.type).toBe(`queryRef`)
+      if (optimized.from.type === `queryRef`) {
+        // Should contain the original condition plus the AND clause (which gets split)
+        expect(optimized.from.query.where).toContainEqual(
+          createGt(createPropRef(`u`, `age`), createValue(18))
+        )
+
+        // Should have the AND clause pushed down (may be split into components)
+        const whereClausesLength = optimized.from.query.where?.length || 0
+        expect(whereClausesLength).toBeGreaterThan(1) // Should have at least the original + new conditions
+      }
+    })
+  })
 })

@@ -29,14 +29,14 @@ export function compileQuery(
   inputs: Record<string, KeyedStream>,
   cache: QueryCache = new WeakMap()
 ): ResultStream {
-  // Optimize the query before compilation
-  const query = optimizeQuery(rawQuery)
-
-  // Check if this query has already been compiled
-  const cachedResult = cache.get(query)
+  // Check if the original raw query has already been compiled
+  const cachedResult = cache.get(rawQuery)
   if (cachedResult) {
     return cachedResult
   }
+
+  // Optimize the query before compilation
+  const query = optimizeQuery(rawQuery)
 
   // Create a copy of the inputs map to avoid modifying the original
   const allInputs = { ...inputs }
@@ -213,8 +213,8 @@ export function compileQuery(
     )
 
     const result = resultPipeline
-    // Cache the result before returning
-    cache.set(query, result)
+    // Cache the result before returning (use original query as key)
+    cache.set(rawQuery, result)
     return result
   } else if (query.limit !== undefined || query.offset !== undefined) {
     // If there's a limit or offset without orderBy, throw an error
@@ -236,8 +236,8 @@ export function compileQuery(
   )
 
   const result = resultPipeline
-  // Cache the result before returning
-  cache.set(query, result)
+  // Cache the result before returning (use original query as key)
+  cache.set(rawQuery, result)
   return result
 }
 

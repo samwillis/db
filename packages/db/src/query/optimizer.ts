@@ -100,8 +100,9 @@ export interface GroupedWhereClauses {
 /**
  * Main query optimizer entry point that lifts WHERE clauses into subqueries.
  *
- * This function implements predicate pushdown optimization by moving single-source
- * WHERE clauses into subqueries, reducing the amount of data processed during joins.
+ * This function implements multi-level predicate pushdown optimization by recursively
+ * moving WHERE clauses through nested subqueries to get them as close to the data
+ * sources as possible, then removing redundant subqueries.
  *
  * @param query - The QueryIR to optimize
  * @returns A new QueryIR with optimizations applied (or original if no optimization possible)
@@ -115,10 +116,69 @@ export interface GroupedWhereClauses {
  * }
  *
  * const optimized = optimizeQuery(originalQuery)
- * // Result: Single-source clauses moved to subqueries
+ * // Result: Single-source clauses moved to deepest possible subqueries
  * ```
  */
 export function optimizeQuery(query: QueryIR): QueryIR {
+  // Apply multi-level predicate pushdown with iterative convergence
+  let optimized = query
+  let previousOptimized: QueryIR | null = null
+  let iterations = 0
+  const maxIterations = 10 // Prevent infinite loops
+
+  // Keep optimizing until no more changes occur or max iterations reached
+  while (
+    iterations < maxIterations &&
+    !areQueriesEqual(optimized, previousOptimized)
+  ) {
+    previousOptimized = optimized
+    optimized = applyRecursiveOptimization(optimized)
+    iterations++
+  }
+
+  // Remove redundant subqueries
+  const cleaned = removeRedundantSubqueries(optimized)
+
+  return cleaned
+}
+
+/**
+ * Applies recursive predicate pushdown optimization.
+ *
+ * @param query - The QueryIR to optimize
+ * @returns A new QueryIR with optimizations applied
+ */
+function applyRecursiveOptimization(query: QueryIR): QueryIR {
+  // First, recursively optimize any existing subqueries
+  const subqueriesOptimized = {
+    ...query,
+    from:
+      query.from.type === `queryRef`
+        ? new QueryRefClass(
+            applyRecursiveOptimization(query.from.query),
+            query.from.alias
+          )
+        : query.from,
+    join: query.join?.map((joinClause) => ({
+      ...joinClause,
+      from:
+        joinClause.from.type === `queryRef`
+          ? new QueryRefClass(
+              applyRecursiveOptimization(joinClause.from.query),
+              joinClause.from.alias
+            )
+          : joinClause.from,
+    })),
+  }
+
+  // Then apply single-level optimization to this query
+  return applySingleLevelOptimization(subqueriesOptimized)
+}
+
+/**
+ * Applies single-level predicate pushdown optimization (existing logic)
+ */
+function applySingleLevelOptimization(query: QueryIR): QueryIR {
   // Skip optimization if no WHERE clauses exist
   if (!query.where || query.where.length === 0) {
     return query
@@ -143,6 +203,74 @@ export function optimizeQuery(query: QueryIR): QueryIR {
 
   // Step 4: Apply optimizations by lifting single-source clauses into subqueries
   return applyOptimizations(query, groupedClauses)
+}
+
+/**
+ * Removes redundant subqueries that don't add value.
+ * A subquery is redundant if it only wraps another query without adding
+ * WHERE, SELECT, GROUP BY, HAVING, ORDER BY, or LIMIT/OFFSET clauses.
+ *
+ * @param query - The QueryIR to process
+ * @returns A new QueryIR with redundant subqueries removed
+ */
+function removeRedundantSubqueries(query: QueryIR): QueryIR {
+  return {
+    ...query,
+    from: removeRedundantFromClause(query.from),
+    join: query.join?.map((joinClause) => ({
+      ...joinClause,
+      from: removeRedundantFromClause(joinClause.from),
+    })),
+  }
+}
+
+/**
+ * Removes redundant subqueries from a FROM clause.
+ *
+ * @param from - The FROM clause to process
+ * @returns A FROM clause with redundant subqueries removed
+ */
+function removeRedundantFromClause(from: From): From {
+  if (from.type === `collectionRef`) {
+    return from
+  }
+
+  const processedQuery = removeRedundantSubqueries(from.query)
+
+  // Check if this subquery is redundant
+  if (isRedundantSubquery(processedQuery)) {
+    // Return the inner query's FROM clause with this alias
+    const innerFrom = removeRedundantFromClause(processedQuery.from)
+    if (innerFrom.type === `collectionRef`) {
+      return new CollectionRefClass(innerFrom.collection, from.alias)
+    } else {
+      return new QueryRefClass(innerFrom.query, from.alias)
+    }
+  }
+
+  return new QueryRefClass(processedQuery, from.alias)
+}
+
+/**
+ * Determines if a subquery is redundant (adds no value).
+ *
+ * @param query - The query to check
+ * @returns True if the query is redundant and can be removed
+ */
+function isRedundantSubquery(query: QueryIR): boolean {
+  return (
+    (!query.where || query.where.length === 0) &&
+    !query.select &&
+    (!query.groupBy || query.groupBy.length === 0) &&
+    (!query.having || query.having.length === 0) &&
+    (!query.orderBy || query.orderBy.length === 0) &&
+    (!query.join || query.join.length === 0) &&
+    query.limit === undefined &&
+    query.offset === undefined &&
+    !query.fnSelect &&
+    (!query.fnWhere || query.fnWhere.length === 0) &&
+    (!query.fnHaving || query.fnHaving.length === 0)
+  )
 }
 
 /**
@@ -457,4 +585,16 @@ function combineWithAnd(
 
   // Create an AND function with all expressions as arguments
   return new Func(`and`, expressions)
+}
+
+/**
+ * Simple query equality check using JSON serialization
+ */
+function areQueriesEqual(query1: QueryIR, query2: QueryIR | null): boolean {
+  if (query2 === null) return false
+  try {
+    return JSON.stringify(query1) === JSON.stringify(query2)
+  } catch {
+    return false
+  }
 }
