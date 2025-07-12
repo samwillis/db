@@ -113,6 +113,25 @@ function expectIndexUsage(
   }
 }
 
+// Helper to run a test with index usage tracking (automatically handles setup/cleanup)
+function withIndexTracking(
+  collection: any,
+  testFn: (tracker: { stats: IndexUsageStats }) => void | Promise<void>
+): void | Promise<void> {
+  const tracker = createIndexUsageTracker(collection)
+
+  try {
+    const result = testFn(tracker)
+    if (result instanceof Promise) {
+      return result.finally(() => tracker.restore())
+    }
+    tracker.restore()
+  } catch (error) {
+    tracker.restore()
+    throw error
+  }
+}
+
 describe(`Collection Indexes`, () => {
   let collection: ReturnType<typeof createCollection<TestItem, string>>
   let testData: Array<TestItem>
@@ -412,9 +431,7 @@ describe(`Collection Indexes`, () => {
     })
 
     it(`should perform equality queries`, () => {
-      const tracker = createIndexUsageTracker(collection as any)
-
-      try {
+      withIndexTracking(collection, (tracker) => {
         const result = collection.currentStateAsChanges({
           where: (row) => eq(row.age, 25),
         })
@@ -429,15 +446,11 @@ describe(`Collection Indexes`, () => {
           indexCallCount: 1,
           fullScanCallCount: 0,
         })
-      } finally {
-        tracker.restore()
-      }
+      })
     })
 
     it(`should perform greater than queries`, () => {
-      const tracker = createIndexUsageTracker(collection as any)
-
-      try {
+      withIndexTracking(collection, (tracker) => {
         const result = collection.currentStateAsChanges({
           where: (row) => gt(row.age, 28),
         })
@@ -453,15 +466,11 @@ describe(`Collection Indexes`, () => {
           indexCallCount: 1,
           fullScanCallCount: 0,
         })
-      } finally {
-        tracker.restore()
-      }
+      })
     })
 
     it(`should perform greater than or equal queries`, () => {
-      const tracker = createIndexUsageTracker(collection as any)
-
-      try {
+      withIndexTracking(collection, (tracker) => {
         const result = collection.currentStateAsChanges({
           where: (row) => gte(row.age, 28),
         })
@@ -477,15 +486,11 @@ describe(`Collection Indexes`, () => {
           indexCallCount: 1,
           fullScanCallCount: 0,
         })
-      } finally {
-        tracker.restore()
-      }
+      })
     })
 
     it(`should perform less than queries`, () => {
-      const tracker = createIndexUsageTracker(collection as any)
-
-      try {
+      withIndexTracking(collection, (tracker) => {
         const result = collection.currentStateAsChanges({
           where: (row) => lt(row.age, 28),
         })
@@ -501,15 +506,11 @@ describe(`Collection Indexes`, () => {
           indexCallCount: 1,
           fullScanCallCount: 0,
         })
-      } finally {
-        tracker.restore()
-      }
+      })
     })
 
     it(`should perform less than or equal queries`, () => {
-      const tracker = createIndexUsageTracker(collection as any)
-
-      try {
+      withIndexTracking(collection, (tracker) => {
         const result = collection.currentStateAsChanges({
           where: (row) => lte(row.age, 28),
         })
@@ -525,15 +526,11 @@ describe(`Collection Indexes`, () => {
           indexCallCount: 1,
           fullScanCallCount: 0,
         })
-      } finally {
-        tracker.restore()
-      }
+      })
     })
 
     it(`should fall back to full scan for complex expressions`, () => {
-      const tracker = createIndexUsageTracker(collection as any)
-
-      try {
+      withIndexTracking(collection, (tracker) => {
         // This should work but use full scan since it's not a simple comparison
         // Using a complex expression that can't be optimized with indexes
         const result = collection.currentStateAsChanges({
@@ -551,15 +548,11 @@ describe(`Collection Indexes`, () => {
           indexCallCount: 0,
           fullScanCallCount: 1,
         })
-      } finally {
-        tracker.restore()
-      }
+      })
     })
 
     it(`should verify index optimization is being used for simple queries`, () => {
-      const tracker = createIndexUsageTracker(collection as any)
-
-      try {
+      withIndexTracking(collection, (tracker) => {
         // This should use index optimization
         const result = collection.currentStateAsChanges({
           where: (row) => eq(row.age, 25),
@@ -584,15 +577,11 @@ describe(`Collection Indexes`, () => {
           field: `age`,
           value: 25,
         })
-      } finally {
-        tracker.restore()
-      }
+      })
     })
 
     it(`should verify different range operations use indexes`, () => {
-      const tracker = createIndexUsageTracker(collection as any)
-
-      try {
+      withIndexTracking(collection, (tracker) => {
         // Test multiple range operations
         const eqResult = collection.currentStateAsChanges({
           where: (row) => eq(row.age, 25),
@@ -630,15 +619,11 @@ describe(`Collection Indexes`, () => {
           type: `index`,
           operation: `lte`,
         })
-      } finally {
-        tracker.restore()
-      }
+      })
     })
 
     it(`should verify complex expressions fall back to full scan`, () => {
-      const tracker = createIndexUsageTracker(collection as any)
-
-      try {
+      withIndexTracking(collection, (tracker) => {
         // This should fall back to full scan
         const result = collection.currentStateAsChanges({
           where: (row) => gt(length(row.name), 3),
@@ -657,15 +642,11 @@ describe(`Collection Indexes`, () => {
         expect(tracker.stats.queriesExecuted[0]).toMatchObject({
           type: `fullScan`,
         })
-      } finally {
-        tracker.restore()
-      }
+      })
     })
 
     it(`should verify queries without matching indexes use full scan`, () => {
-      const tracker = createIndexUsageTracker(collection as any)
-
-      try {
+      withIndexTracking(collection, (tracker) => {
         // Query on a field without an index (status)
         const result = collection.currentStateAsChanges({
           where: (row) => eq(row.status, `active`),
@@ -680,9 +661,7 @@ describe(`Collection Indexes`, () => {
           indexCallCount: 0,
           fullScanCallCount: 1,
         })
-      } finally {
-        tracker.restore()
-      }
+      })
     })
   })
 
@@ -699,9 +678,7 @@ describe(`Collection Indexes`, () => {
         name: `nameIndex`,
       })
 
-      const tracker = createIndexUsageTracker(collection as any)
-
-      try {
+      withIndexTracking(collection, (tracker) => {
         // Query using age index
         const ageQuery = collection.currentStateAsChanges({
           where: (row) => gte(row.age, 30),
@@ -740,18 +717,15 @@ describe(`Collection Indexes`, () => {
         // Test that we can identify which specific index was used
         const usedIndexes = new Set(tracker.stats.indexesUsed)
         expect(usedIndexes.size).toBe(3) // Three different indexes used
-      } finally {
-        tracker.restore()
-      }
+      })
     })
 
     it(`should verify 100% index usage for subscriptions`, () => {
       collection.createIndex((row) => row.status)
 
-      const tracker = createIndexUsageTracker(collection as any)
-      const changes: Array<any> = []
+      withIndexTracking(collection, (tracker) => {
+        const changes: Array<any> = []
 
-      try {
         // Subscribe with a where clause that should use index
         const unsubscribe = collection.subscribeChanges(
           (items) => changes.push(...items),
@@ -772,9 +746,7 @@ describe(`Collection Indexes`, () => {
         })
 
         unsubscribe()
-      } finally {
-        tracker.restore()
-      }
+      })
     })
   })
 
@@ -785,10 +757,9 @@ describe(`Collection Indexes`, () => {
     })
 
     it(`should subscribe to filtered changes with index optimization`, async () => {
-      const tracker = createIndexUsageTracker(collection as any)
-      const changes: Array<any> = []
+      await withIndexTracking(collection, async (tracker) => {
+        const changes: Array<any> = []
 
-      try {
         const unsubscribe = collection.subscribeChanges(
           (items) => {
             changes.push(...items)
@@ -860,16 +831,13 @@ describe(`Collection Indexes`, () => {
         expect(changes).toHaveLength(0) // No longer matches filter
 
         unsubscribe()
-      } finally {
-        tracker.restore()
-      }
+      })
     })
 
     it(`should handle range queries in subscriptions`, async () => {
-      const tracker = createIndexUsageTracker(collection as any)
-      const changes: Array<any> = []
+      await withIndexTracking(collection, async (tracker) => {
+        const changes: Array<any> = []
 
-      try {
         const unsubscribe = collection.subscribeChanges(
           (items) => {
             changes.push(...items)
@@ -908,9 +876,7 @@ describe(`Collection Indexes`, () => {
         expect(changes[0]?.value.name).toBe(`Diana`)
 
         unsubscribe()
-      } finally {
-        tracker.restore()
-      }
+      })
     })
 
     it(`should handle subscription updates correctly`, async () => {
