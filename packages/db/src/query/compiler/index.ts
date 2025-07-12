@@ -19,21 +19,21 @@ type QueryCache = WeakMap<QueryIR, ResultStream>
 
 /**
  * Compiles a query2 IR into a D2 pipeline
- * @param query The query IR to compile
+ * @param rawQuery The query IR to compile
  * @param inputs Mapping of collection names to input streams
  * @param cache Optional cache for compiled subqueries (used internally for recursion)
  * @returns A stream builder representing the compiled query
  */
 export function compileQuery(
-  query: QueryIR,
+  rawQuery: QueryIR,
   inputs: Record<string, KeyedStream>,
   cache: QueryCache = new WeakMap()
 ): ResultStream {
   // Optimize the query before compilation
-  const optimizedQuery = optimizeQuery(query)
+  const query = optimizeQuery(rawQuery)
 
   // Check if this query has already been compiled
-  const cachedResult = cache.get(optimizedQuery)
+  const cachedResult = cache.get(query)
   if (cachedResult) {
     return cachedResult
   }
@@ -46,7 +46,7 @@ export function compileQuery(
 
   // Process the FROM clause to get the main table
   const { alias: mainTableAlias, input: mainInput } = processFrom(
-    optimizedQuery.from,
+    query.from,
     allInputs,
     cache
   )
@@ -65,10 +65,10 @@ export function compileQuery(
   )
 
   // Process JOIN clauses if they exist
-  if (optimizedQuery.join && optimizedQuery.join.length > 0) {
+  if (query.join && query.join.length > 0) {
     pipeline = processJoins(
       pipeline,
-      optimizedQuery.join,
+      query.join,
       tables,
       mainTableAlias,
       allInputs,
@@ -77,11 +77,9 @@ export function compileQuery(
   }
 
   // Process the WHERE clause if it exists
-  if (optimizedQuery.where && optimizedQuery.where.length > 0) {
+  if (query.where && query.where.length > 0) {
     // Compile all WHERE expressions
-    const compiledWheres = optimizedQuery.where.map((where) =>
-      compileExpression(where)
-    )
+    const compiledWheres = query.where.map((where) => compileExpression(where))
 
     // Apply each WHERE condition as a filter (they are ANDed together)
     for (const compiledWhere of compiledWheres) {
@@ -94,8 +92,8 @@ export function compileQuery(
   }
 
   // Process functional WHERE clauses if they exist
-  if (optimizedQuery.fnWhere && optimizedQuery.fnWhere.length > 0) {
-    for (const fnWhere of optimizedQuery.fnWhere) {
+  if (query.fnWhere && query.fnWhere.length > 0) {
+    for (const fnWhere of query.fnWhere) {
       pipeline = pipeline.pipe(
         filter(([_key, namespacedRow]) => {
           return fnWhere(namespacedRow)
@@ -106,11 +104,11 @@ export function compileQuery(
 
   // Process the SELECT clause early - always create __select_results
   // This eliminates duplication and allows for future DISTINCT implementation
-  if (optimizedQuery.fnSelect) {
+  if (query.fnSelect) {
     // Handle functional select - apply the function to transform the row
     pipeline = pipeline.pipe(
       map(([key, namespacedRow]) => {
-        const selectResults = optimizedQuery.fnSelect!(namespacedRow)
+        const selectResults = query.fnSelect!(namespacedRow)
         return [
           key,
           {
@@ -120,18 +118,14 @@ export function compileQuery(
         ] as [string, typeof namespacedRow & { __select_results: any }]
       })
     )
-  } else if (optimizedQuery.select) {
-    pipeline = processSelectToResults(
-      pipeline,
-      optimizedQuery.select,
-      allInputs
-    )
+  } else if (query.select) {
+    pipeline = processSelectToResults(pipeline, query.select, allInputs)
   } else {
     // If no SELECT clause, create __select_results with the main table data
     pipeline = pipeline.pipe(
       map(([key, namespacedRow]) => {
         const selectResults =
-          !optimizedQuery.join && !optimizedQuery.groupBy
+          !query.join && !query.groupBy
             ? namespacedRow[mainTableAlias]
             : namespacedRow
 
@@ -147,17 +141,17 @@ export function compileQuery(
   }
 
   // Process the GROUP BY clause if it exists
-  if (optimizedQuery.groupBy && optimizedQuery.groupBy.length > 0) {
+  if (query.groupBy && query.groupBy.length > 0) {
     pipeline = processGroupBy(
       pipeline,
-      optimizedQuery.groupBy,
-      optimizedQuery.having,
-      optimizedQuery.select,
-      optimizedQuery.fnHaving
+      query.groupBy,
+      query.having,
+      query.select,
+      query.fnHaving
     )
-  } else if (optimizedQuery.select) {
+  } else if (query.select) {
     // Check if SELECT contains aggregates but no GROUP BY (implicit single-group aggregation)
-    const hasAggregates = Object.values(optimizedQuery.select).some(
+    const hasAggregates = Object.values(query.select).some(
       (expr) => expr.type === `agg`
     )
     if (hasAggregates) {
@@ -165,21 +159,18 @@ export function compileQuery(
       pipeline = processGroupBy(
         pipeline,
         [], // Empty group by means single group
-        optimizedQuery.having,
-        optimizedQuery.select,
-        optimizedQuery.fnHaving
+        query.having,
+        query.select,
+        query.fnHaving
       )
     }
   }
 
   // Process the HAVING clause if it exists (only applies after GROUP BY)
-  if (
-    optimizedQuery.having &&
-    (!optimizedQuery.groupBy || optimizedQuery.groupBy.length === 0)
-  ) {
+  if (query.having && (!query.groupBy || query.groupBy.length === 0)) {
     // Check if we have aggregates in SELECT that would trigger implicit grouping
-    const hasAggregates = optimizedQuery.select
-      ? Object.values(optimizedQuery.select).some((expr) => expr.type === `agg`)
+    const hasAggregates = query.select
+      ? Object.values(query.select).some((expr) => expr.type === `agg`)
       : false
 
     if (!hasAggregates) {
@@ -189,12 +180,12 @@ export function compileQuery(
 
   // Process functional HAVING clauses outside of GROUP BY (treat as additional WHERE filters)
   if (
-    optimizedQuery.fnHaving &&
-    optimizedQuery.fnHaving.length > 0 &&
-    (!optimizedQuery.groupBy || optimizedQuery.groupBy.length === 0)
+    query.fnHaving &&
+    query.fnHaving.length > 0 &&
+    (!query.groupBy || query.groupBy.length === 0)
   ) {
     // If there's no GROUP BY but there are fnHaving clauses, apply them as filters
-    for (const fnHaving of optimizedQuery.fnHaving) {
+    for (const fnHaving of query.fnHaving) {
       pipeline = pipeline.pipe(
         filter(([_key, namespacedRow]) => {
           return fnHaving(namespacedRow)
@@ -204,12 +195,12 @@ export function compileQuery(
   }
 
   // Process orderBy parameter if it exists
-  if (optimizedQuery.orderBy && optimizedQuery.orderBy.length > 0) {
+  if (query.orderBy && query.orderBy.length > 0) {
     const orderedPipeline = processOrderBy(
       pipeline,
-      optimizedQuery.orderBy,
-      optimizedQuery.limit,
-      optimizedQuery.offset
+      query.orderBy,
+      query.limit,
+      query.offset
     )
 
     // Final step: extract the __select_results and include orderBy index
@@ -223,12 +214,9 @@ export function compileQuery(
 
     const result = resultPipeline
     // Cache the result before returning
-    cache.set(optimizedQuery, result)
+    cache.set(query, result)
     return result
-  } else if (
-    optimizedQuery.limit !== undefined ||
-    optimizedQuery.offset !== undefined
-  ) {
+  } else if (query.limit !== undefined || query.offset !== undefined) {
     // If there's a limit or offset without orderBy, throw an error
     throw new Error(
       `LIMIT and OFFSET require an ORDER BY clause to ensure deterministic results`
@@ -249,7 +237,7 @@ export function compileQuery(
 
   const result = resultPipeline
   // Cache the result before returning
-  cache.set(optimizedQuery, result)
+  cache.set(query, result)
   return result
 }
 
