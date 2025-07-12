@@ -1,6 +1,13 @@
 import { describe, expect, test } from "vitest"
 import { optimizeQuery } from "../../src/query/optimizer.js"
-import { CollectionRef, Func, PropRef, Value } from "../../src/query/ir.js"
+import {
+  Aggregate,
+  CollectionRef,
+  Func,
+  PropRef,
+  QueryRef,
+  Value,
+} from "../../src/query/ir.js"
 import type { QueryIR } from "../../src/query/ir.js"
 
 // Mock collection for testing
@@ -25,12 +32,20 @@ function createGt(left: any, right: any) {
   return new Func(`gt`, [left, right])
 }
 
+function createLt(left: any, right: any) {
+  return new Func(`lt`, [left, right])
+}
+
 function createAnd(...args: Array<any>) {
   return new Func(`and`, args)
 }
 
 function createOr(...args: Array<any>) {
   return new Func(`or`, args)
+}
+
+function createAgg(name: string, ...args: Array<any>) {
+  return new Aggregate(name, args)
 }
 
 describe(`Query Optimizer`, () => {
@@ -281,6 +296,419 @@ describe(`Query Optimizer`, () => {
         expect(whereClause).toBeDefined()
         expect((whereClause as any).type).toBe(`func`)
         expect((whereClause as any).name).toBe(`or`)
+      }
+    })
+
+    test(`should handle deeply nested AND clauses`, () => {
+      const query: QueryIR = {
+        from: new CollectionRef(mockCollection, `u`),
+        join: [
+          {
+            from: new CollectionRef(mockCollection, `p`),
+            type: `inner`,
+            left: createPropRef(`u`, `id`),
+            right: createPropRef(`p`, `user_id`),
+          },
+        ],
+        where: [
+          createAnd(
+            createAnd(
+              createEq(createPropRef(`u`, `department_id`), createValue(1)),
+              createGt(createPropRef(`u`, `id`), createValue(100))
+            ),
+            createLt(createPropRef(`u`, `age`), createValue(65))
+          ),
+        ],
+      }
+
+      const optimized = optimizeQuery(query)
+
+      // The main query should have no where clauses
+      expect(optimized.where).toEqual([])
+
+      // The from should be a QueryRef with all three conditions combined
+      expect(optimized.from.type).toBe(`queryRef`)
+      if (optimized.from.type === `queryRef`) {
+        expect(optimized.from.query.where).toHaveLength(1)
+        const whereClause = optimized.from.query.where![0]
+        expect(whereClause).toBeDefined()
+        expect((whereClause as any).type).toBe(`func`)
+        expect((whereClause as any).name).toBe(`and`)
+        expect((whereClause as any).args).toHaveLength(3)
+      }
+    })
+  })
+
+  describe(`Edge Cases and Advanced Scenarios`, () => {
+    test(`should handle queries with all optional fields populated`, () => {
+      const query: QueryIR = {
+        from: new CollectionRef(mockCollection, `u`),
+        join: [
+          {
+            from: new CollectionRef(mockCollection, `p`),
+            type: `inner`,
+            left: createPropRef(`u`, `id`),
+            right: createPropRef(`p`, `user_id`),
+          },
+        ],
+        where: [createEq(createPropRef(`u`, `department_id`), createValue(1))],
+        select: {
+          name: createPropRef(`u`, `name`),
+          title: createPropRef(`p`, `title`),
+        },
+        groupBy: [createPropRef(`u`, `department_id`)],
+        having: [
+          createGt(
+            createAgg(`count`, createPropRef(`p`, `id`)),
+            createValue(5)
+          ),
+        ],
+        orderBy: [{ expression: createPropRef(`u`, `name`), direction: `asc` }],
+        limit: 10,
+        offset: 5,
+        fnSelect: () => ({ name: `test` }),
+        fnWhere: [() => true],
+        fnHaving: [() => true],
+      }
+
+      const optimized = optimizeQuery(query)
+
+      // All fields should be preserved
+      expect(optimized.select).toEqual(query.select)
+      expect(optimized.groupBy).toEqual(query.groupBy)
+      expect(optimized.having).toEqual(query.having)
+      expect(optimized.orderBy).toEqual(query.orderBy)
+      expect(optimized.limit).toEqual(query.limit)
+      expect(optimized.offset).toEqual(query.offset)
+      expect(optimized.fnSelect).toEqual(query.fnSelect)
+      expect(optimized.fnWhere).toEqual(query.fnWhere)
+      expect(optimized.fnHaving).toEqual(query.fnHaving)
+
+      // WHERE clause should be moved to subquery
+      expect(optimized.where).toEqual([])
+      expect(optimized.from.type).toBe(`queryRef`)
+    })
+
+    test(`should handle constant expressions (zero sources)`, () => {
+      const query: QueryIR = {
+        from: new CollectionRef(mockCollection, `u`),
+        join: [
+          {
+            from: new CollectionRef(mockCollection, `p`),
+            type: `inner`,
+            left: createPropRef(`u`, `id`),
+            right: createPropRef(`p`, `user_id`),
+          },
+        ],
+        where: [
+          createEq(createValue(1), createValue(1)), // Constant expression
+          createEq(createPropRef(`u`, `department_id`), createValue(1)),
+        ],
+      }
+
+      const optimized = optimizeQuery(query)
+
+      // The constant expression should be ignored, single-source clause should be optimized
+      expect(optimized.where).toEqual([])
+      expect(optimized.from.type).toBe(`queryRef`)
+      if (optimized.from.type === `queryRef`) {
+        expect(optimized.from.query.where).toHaveLength(1)
+        expect(optimized.from.query.where![0]).toEqual(
+          createEq(createPropRef(`u`, `department_id`), createValue(1))
+        )
+      }
+    })
+
+    test(`should handle aggregate expressions in WHERE clauses`, () => {
+      const query: QueryIR = {
+        from: new CollectionRef(mockCollection, `u`),
+        join: [
+          {
+            from: new CollectionRef(mockCollection, `p`),
+            type: `inner`,
+            left: createPropRef(`u`, `id`),
+            right: createPropRef(`p`, `user_id`),
+          },
+        ],
+        where: [
+          createGt(
+            createAgg(`count`, createPropRef(`p`, `id`)),
+            createValue(5)
+          ),
+        ],
+      }
+
+      const optimized = optimizeQuery(query)
+
+      // The aggregate expression should be optimized to the posts subquery
+      expect(optimized.where).toEqual([])
+      expect(optimized.join).toHaveLength(1)
+      if (optimized.join && optimized.join.length > 0) {
+        const joinClause = optimized.join[0]!
+        expect(joinClause.from.type).toBe(`queryRef`)
+        if (joinClause.from.type === `queryRef`) {
+          expect(joinClause.from.query.where).toHaveLength(1)
+          expect(joinClause.from.query.where![0]).toEqual(
+            createGt(
+              createAgg(`count`, createPropRef(`p`, `id`)),
+              createValue(5)
+            )
+          )
+        }
+      }
+    })
+
+    test(`should handle multiple multi-source clauses`, () => {
+      const query: QueryIR = {
+        from: new CollectionRef(mockCollection, `u`),
+        join: [
+          {
+            from: new CollectionRef(mockCollection, `p`),
+            type: `inner`,
+            left: createPropRef(`u`, `id`),
+            right: createPropRef(`p`, `user_id`),
+          },
+        ],
+        where: [
+          createEq(createPropRef(`u`, `id`), createPropRef(`p`, `user_id`)),
+          createGt(
+            createPropRef(`u`, `created_at`),
+            createPropRef(`p`, `created_at`)
+          ),
+        ],
+      }
+
+      const optimized = optimizeQuery(query)
+
+      // Both multi-source clauses should be combined with AND in the main query
+      expect(optimized.where).toHaveLength(1)
+      const whereClause = optimized.where![0]
+      expect((whereClause as any).type).toBe(`func`)
+      expect((whereClause as any).name).toBe(`and`)
+      expect((whereClause as any).args).toHaveLength(2)
+    })
+
+    test(`should handle existing QueryRef with WHERE clauses`, () => {
+      const existingSubquery: QueryIR = {
+        from: new CollectionRef(mockCollection, `u`),
+        where: [createGt(createPropRef(`u`, `id`), createValue(50))],
+      }
+
+      const query: QueryIR = {
+        from: new QueryRef(existingSubquery, `u`),
+        join: [
+          {
+            from: new CollectionRef(mockCollection, `p`),
+            type: `inner`,
+            left: createPropRef(`u`, `id`),
+            right: createPropRef(`p`, `user_id`),
+          },
+        ],
+        where: [createEq(createPropRef(`u`, `department_id`), createValue(1))],
+      }
+
+      const optimized = optimizeQuery(query)
+
+      // The existing subquery should have both WHERE clauses
+      expect(optimized.from.type).toBe(`queryRef`)
+      if (optimized.from.type === `queryRef`) {
+        expect(optimized.from.query.where).toHaveLength(2)
+        expect(optimized.from.query.where![0]).toEqual(
+          createGt(createPropRef(`u`, `id`), createValue(50))
+        )
+        expect(optimized.from.query.where![1]).toEqual(
+          createEq(createPropRef(`u`, `department_id`), createValue(1))
+        )
+      }
+    })
+
+    test(`should handle deeply nested QueryRef structures`, () => {
+      const deeplyNestedQuery: QueryIR = {
+        from: new QueryRef(
+          {
+            from: new CollectionRef(mockCollection, `u`),
+            where: [createGt(createPropRef(`u`, `id`), createValue(10))],
+          },
+          `u`
+        ),
+        where: [createLt(createPropRef(`u`, `age`), createValue(50))],
+      }
+
+      const query: QueryIR = {
+        from: new QueryRef(deeplyNestedQuery, `u`),
+        join: [
+          {
+            from: new CollectionRef(mockCollection, `p`),
+            type: `inner`,
+            left: createPropRef(`u`, `id`),
+            right: createPropRef(`p`, `user_id`),
+          },
+        ],
+        where: [createEq(createPropRef(`u`, `department_id`), createValue(1))],
+      }
+
+      const optimized = optimizeQuery(query)
+
+      // The deeply nested structure should be preserved and new WHERE clause added
+      expect(optimized.from.type).toBe(`queryRef`)
+      if (optimized.from.type === `queryRef`) {
+        expect(optimized.from.query.where).toHaveLength(2)
+        expect(optimized.from.query.from.type).toBe(`queryRef`)
+      }
+    })
+
+    test(`should handle PropRef with empty path`, () => {
+      const emptyPathPropRef = new PropRef([])
+      const query: QueryIR = {
+        from: new CollectionRef(mockCollection, `u`),
+        join: [
+          {
+            from: new CollectionRef(mockCollection, `p`),
+            type: `inner`,
+            left: createPropRef(`u`, `id`),
+            right: createPropRef(`p`, `user_id`),
+          },
+        ],
+        where: [createEq(emptyPathPropRef, createValue(1))],
+      }
+
+      const optimized = optimizeQuery(query)
+
+      // The empty path PropRef should be treated as a constant (no sources)
+      expect(optimized.where).toEqual([])
+      expect(optimized.from.type).toBe(`collectionRef`)
+    })
+
+    test(`should handle mixed single-source and multi-source clauses with constants`, () => {
+      const query: QueryIR = {
+        from: new CollectionRef(mockCollection, `u`),
+        join: [
+          {
+            from: new CollectionRef(mockCollection, `p`),
+            type: `inner`,
+            left: createPropRef(`u`, `id`),
+            right: createPropRef(`p`, `user_id`),
+          },
+        ],
+        where: [
+          createEq(createPropRef(`u`, `department_id`), createValue(1)), // Single source
+          createEq(createPropRef(`u`, `id`), createPropRef(`p`, `user_id`)), // Multi source
+          createGt(createPropRef(`p`, `views`), createValue(100)), // Single source
+          createEq(createValue(1), createValue(1)), // Constant
+        ],
+      }
+
+      const optimized = optimizeQuery(query)
+
+      // Multi-source clause should remain in main query
+      expect(optimized.where).toHaveLength(1)
+      expect(optimized.where![0]).toEqual(
+        createEq(createPropRef(`u`, `id`), createPropRef(`p`, `user_id`))
+      )
+
+      // Single-source clauses should be moved to subqueries
+      expect(optimized.from.type).toBe(`queryRef`)
+      if (optimized.from.type === `queryRef`) {
+        expect(optimized.from.query.where).toHaveLength(1)
+      }
+
+      expect(optimized.join).toHaveLength(1)
+      if (optimized.join && optimized.join.length > 0) {
+        const joinClause = optimized.join[0]!
+        expect(joinClause.from.type).toBe(`queryRef`)
+        if (joinClause.from.type === `queryRef`) {
+          expect(joinClause.from.query.where).toHaveLength(1)
+        }
+      }
+    })
+  })
+
+  describe(`Error Handling`, () => {
+    test(`should handle malformed expressions gracefully`, () => {
+      const malformedExpression = {
+        type: `unknown`,
+        value: `test`,
+      } as any
+
+      const query: QueryIR = {
+        from: new CollectionRef(mockCollection, `u`),
+        join: [
+          {
+            from: new CollectionRef(mockCollection, `p`),
+            type: `inner`,
+            left: createPropRef(`u`, `id`),
+            right: createPropRef(`p`, `user_id`),
+          },
+        ],
+        where: [malformedExpression],
+      }
+
+      const optimized = optimizeQuery(query)
+
+      // Should not crash and should handle the malformed expression gracefully
+      expect(optimized).toBeDefined()
+      expect(optimized.where).toEqual([])
+    })
+
+    test(`should handle PropRef with empty first element`, () => {
+      const propRefWithEmptyFirst = new PropRef([``, `name`])
+      const query: QueryIR = {
+        from: new CollectionRef(mockCollection, `u`),
+        join: [
+          {
+            from: new CollectionRef(mockCollection, `p`),
+            type: `inner`,
+            left: createPropRef(`u`, `id`),
+            right: createPropRef(`p`, `user_id`),
+          },
+        ],
+        where: [
+          createEq(propRefWithEmptyFirst, createValue(1)),
+          createEq(createPropRef(`u`, `department_id`), createValue(1)),
+        ],
+      }
+
+      const optimized = optimizeQuery(query)
+
+      // PropRef with empty first element should be ignored, other clause should be optimized
+      expect(optimized.where).toEqual([])
+      expect(optimized.from.type).toBe(`queryRef`)
+      if (optimized.from.type === `queryRef`) {
+        expect(optimized.from.query.where).toHaveLength(1)
+        expect(optimized.from.query.where![0]).toEqual(
+          createEq(createPropRef(`u`, `department_id`), createValue(1))
+        )
+      }
+    })
+
+    test(`should handle PropRef with undefined first element`, () => {
+      const propRefWithUndefinedFirst = new PropRef([undefined as any, `name`])
+      const query: QueryIR = {
+        from: new CollectionRef(mockCollection, `u`),
+        join: [
+          {
+            from: new CollectionRef(mockCollection, `p`),
+            type: `inner`,
+            left: createPropRef(`u`, `id`),
+            right: createPropRef(`p`, `user_id`),
+          },
+        ],
+        where: [
+          createEq(propRefWithUndefinedFirst, createValue(1)),
+          createEq(createPropRef(`u`, `department_id`), createValue(1)),
+        ],
+      }
+
+      const optimized = optimizeQuery(query)
+
+      // PropRef with undefined first element should be ignored, other clause should be optimized
+      expect(optimized.where).toEqual([])
+      expect(optimized.from.type).toBe(`queryRef`)
+      if (optimized.from.type === `queryRef`) {
+        expect(optimized.from.query.where).toHaveLength(1)
+        expect(optimized.from.query.where![0]).toEqual(
+          createEq(createPropRef(`u`, `department_id`), createValue(1))
+        )
       }
     })
   })
