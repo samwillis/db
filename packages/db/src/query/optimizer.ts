@@ -433,8 +433,46 @@ function applyOptimizations(
   query: QueryIR,
   groupedClauses: GroupedWhereClauses
 ): QueryIR {
+  // Track which single-source clauses were actually optimized
+  const actuallyOptimized = new Set<string>()
+
+  // Optimize the main FROM clause and track what was optimized
+  const optimizedFrom = optimizeFromWithTracking(
+    query.from,
+    groupedClauses.singleSource,
+    actuallyOptimized
+  )
+
+  // Optimize JOIN clauses and track what was optimized
+  const optimizedJoins = query.join
+    ? query.join.map((joinClause) => ({
+        type: joinClause.type,
+        left: joinClause.left,
+        right: joinClause.right,
+        from: optimizeFromWithTracking(
+          joinClause.from,
+          groupedClauses.singleSource,
+          actuallyOptimized
+        ),
+      }))
+    : undefined
+
+  // Build the remaining WHERE clauses: multi-source + any single-source that weren't optimized
+  const remainingWhereClauses: Array<BasicExpression<boolean>> = []
+
+  // Add multi-source clauses
+  if (groupedClauses.multiSource) {
+    remainingWhereClauses.push(groupedClauses.multiSource)
+  }
+
+  // Add single-source clauses that weren't actually optimized
+  for (const [source, clause] of groupedClauses.singleSource) {
+    if (!actuallyOptimized.has(source)) {
+      remainingWhereClauses.push(clause)
+    }
+  }
+
   // Create a completely new query object to ensure immutability
-  // This prevents infinite recursion and shared reference issues
   const optimizedQuery: QueryIR = {
     // Copy all non-optimized fields as-is
     select: query.select,
@@ -447,22 +485,12 @@ function applyOptimizations(
     fnWhere: query.fnWhere ? [...query.fnWhere] : undefined,
     fnHaving: query.fnHaving ? [...query.fnHaving] : undefined,
 
-    // Optimize the main FROM clause by potentially lifting WHERE clauses
-    from: optimizeFrom(query.from, groupedClauses.singleSource),
+    // Use the optimized FROM and JOIN clauses
+    from: optimizedFrom,
+    join: optimizedJoins,
 
-    // Optimize JOIN clauses by potentially lifting WHERE clauses
-    join: query.join
-      ? query.join.map((joinClause) => ({
-          type: joinClause.type,
-          left: joinClause.left,
-          right: joinClause.right,
-          from: optimizeFrom(joinClause.from, groupedClauses.singleSource),
-        }))
-      : undefined,
-
-    // Update WHERE clause to only include multi-source clauses
-    // Single-source clauses have been moved to subqueries
-    where: groupedClauses.multiSource ? [groupedClauses.multiSource] : [],
+    // Only include WHERE clauses that weren't successfully optimized
+    where: remainingWhereClauses.length > 0 ? remainingWhereClauses : [],
   }
 
   return optimizedQuery
@@ -517,19 +545,17 @@ function deepCopyQuery(query: QueryIR): QueryIR {
 }
 
 /**
- * Helper function to optimize a FROM clause (CollectionRef or QueryRef).
- *
- * If the FROM clause has associated single-source WHERE clauses, they are
- * lifted into a subquery. This ensures immutability by always returning
- * new objects, even when no optimization is applied.
+ * Helper function to optimize a FROM clause while tracking what was actually optimized.
  *
  * @param from - FROM clause to optimize
  * @param singleSourceClauses - Map of source aliases to their WHERE clauses
+ * @param actuallyOptimized - Set to track which sources were actually optimized
  * @returns New FROM clause, potentially wrapped in a subquery
  */
-function optimizeFrom(
+function optimizeFromWithTracking(
   from: From,
-  singleSourceClauses: Map<string, BasicExpression<boolean>>
+  singleSourceClauses: Map<string, BasicExpression<boolean>>,
+  actuallyOptimized: Set<string>
 ): From {
   const whereClause = singleSourceClauses.get(from.alias)
 
@@ -548,10 +574,19 @@ function optimizeFrom(
       from: new CollectionRefClass(from.collection, from.alias),
       where: [whereClause],
     }
+    actuallyOptimized.add(from.alias) // Mark as successfully optimized
     return new QueryRefClass(subQuery, from.alias)
   }
 
   // Must be queryRef due to type system
+
+  // SAFETY CHECK: Do not optimize subqueries that could have their semantics changed
+  if (!isSafeToOptimize(from.query)) {
+    // Return a copy without optimization to maintain immutability
+    // Do NOT mark as optimized since we didn't actually optimize it
+    return new QueryRefClass(deepCopyQuery(from.query), from.alias)
+  }
+
   // Add the WHERE clause to the existing subquery
   // Create a deep copy to ensure immutability
   const existingWhere = from.query.where || []
@@ -559,7 +594,74 @@ function optimizeFrom(
     ...deepCopyQuery(from.query),
     where: [...existingWhere, whereClause],
   }
+  actuallyOptimized.add(from.alias) // Mark as successfully optimized
   return new QueryRefClass(optimizedSubQuery, from.alias)
+}
+
+/**
+ * Determines if a subquery is safe to optimize with predicate pushdown.
+ *
+ * Predicate pushdown can break semantics in several cases:
+ *
+ * 1. **Aggregates**: Pushing predicates before GROUP BY changes what gets aggregated
+ * 2. **ORDER BY + LIMIT/OFFSET**: Pushing predicates before sorting+limiting changes the result set
+ * 3. **HAVING clauses**: These operate on aggregated data, predicates should not be pushed past them
+ * 4. **Functional operations**: fnSelect, fnWhere, fnHaving could have side effects
+ *
+ * @param query - The subquery to check for safety
+ * @returns True if the query is safe to optimize, false otherwise
+ *
+ * @example
+ * ```typescript
+ * // UNSAFE: has GROUP BY - pushing WHERE could change aggregation
+ * { from: users, groupBy: [dept], select: { count: agg('count', '*') } }
+ *
+ * // UNSAFE: has ORDER BY + LIMIT - pushing WHERE could change "top 10"
+ * { from: users, orderBy: [salary desc], limit: 10 }
+ *
+ * // SAFE: plain SELECT without aggregates/limits
+ * { from: users, select: { id, name } }
+ * ```
+ */
+function isSafeToOptimize(query: QueryIR): boolean {
+  // Check for aggregates in SELECT clause
+  if (query.select) {
+    const hasAggregates = Object.values(query.select).some(
+      (expr) => expr.type === `agg`
+    )
+    if (hasAggregates) {
+      return false
+    }
+  }
+
+  // Check for GROUP BY clause
+  if (query.groupBy && query.groupBy.length > 0) {
+    return false
+  }
+
+  // Check for HAVING clause
+  if (query.having && query.having.length > 0) {
+    return false
+  }
+
+  // Check for ORDER BY with LIMIT or OFFSET (dangerous combination)
+  if (query.orderBy && query.orderBy.length > 0) {
+    if (query.limit !== undefined || query.offset !== undefined) {
+      return false
+    }
+  }
+
+  // Check for functional variants that might have side effects
+  if (
+    query.fnSelect ||
+    (query.fnWhere && query.fnWhere.length > 0) ||
+    (query.fnHaving && query.fnHaving.length > 0)
+  ) {
+    return false
+  }
+
+  // If none of the unsafe conditions are present, it's safe to optimize
+  return true
 }
 
 /**

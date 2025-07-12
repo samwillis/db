@@ -1043,4 +1043,352 @@ describe(`Query Optimizer`, () => {
       }
     })
   })
+
+  describe(`Safety and Edge Cases`, () => {
+    test(`should handle subquery reuse safely - same subquery in multiple contexts`, () => {
+      // Create a single subquery object that's reused in different contexts
+      const sharedSubquery: QueryIR = {
+        from: new CollectionRef(mockCollection, `u`),
+        select: {
+          id: createPropRef(`u`, `id`),
+          name: createPropRef(`u`, `name`),
+        },
+      }
+
+      // Use the same subquery object in multiple places with different WHERE conditions
+      const query: QueryIR = {
+        from: new QueryRef(sharedSubquery, `main_users`),
+        join: [
+          {
+            from: new QueryRef(sharedSubquery, `other_users`), // Same subquery object!
+            type: `inner`,
+            left: createPropRef(`main_users`, `id`),
+            right: createPropRef(`other_users`, `id`),
+          },
+        ],
+        where: [
+          createEq(
+            createPropRef(`main_users`, `department_id`),
+            createValue(1)
+          ), // Should only affect main_users context
+          createEq(
+            createPropRef(`other_users`, `department_id`),
+            createValue(2)
+          ), // Should only affect other_users context
+        ],
+      }
+
+      const optimized = optimizeQuery(query)
+
+      // Verify that both contexts get their appropriate filters without cross-contamination
+      expect(optimized.where).toEqual([])
+
+      // Main users should get department_id = 1
+      expect(optimized.from.type).toBe(`queryRef`)
+      if (optimized.from.type === `queryRef`) {
+        expect(optimized.from.query.where).toContainEqual(
+          createEq(createPropRef(`main_users`, `department_id`), createValue(1))
+        )
+      }
+
+      // Other users should get department_id = 2
+      expect(optimized.join).toHaveLength(1)
+      if (optimized.join && optimized.join.length > 0) {
+        const joinClause = optimized.join[0]!
+        expect(joinClause.from.type).toBe(`queryRef`)
+        if (joinClause.from.type === `queryRef`) {
+          expect(joinClause.from.query.where).toContainEqual(
+            createEq(
+              createPropRef(`other_users`, `department_id`),
+              createValue(2)
+            )
+          )
+        }
+      }
+    })
+
+    test(`should not optimize subqueries with aggregates - could change results`, () => {
+      const subqueryWithAggregates: QueryIR = {
+        from: new CollectionRef(mockCollection, `u`),
+        select: {
+          department_id: createPropRef(`u`, `department_id`),
+          user_count: createAgg(`count`, createPropRef(`u`, `id`)),
+        },
+        groupBy: [createPropRef(`u`, `department_id`)],
+      }
+
+      const query: QueryIR = {
+        from: new QueryRef(subqueryWithAggregates, `stats`),
+        join: [
+          {
+            from: new CollectionRef(mockCollection, `p`),
+            type: `inner`,
+            left: createPropRef(`stats`, `department_id`),
+            right: createPropRef(`p`, `department_id`),
+          },
+        ],
+        where: [
+          createGt(createPropRef(`stats`, `user_count`), createValue(5)), // Should NOT be pushed down
+        ],
+      }
+
+      const optimized = optimizeQuery(query)
+
+      // The WHERE clause should remain in the main query since pushing it down
+      // would change the aggregation results
+      expect(optimized.where).toHaveLength(1)
+      expect(optimized.where![0]).toEqual(
+        createGt(createPropRef(`stats`, `user_count`), createValue(5))
+      )
+    })
+
+    test(`should not optimize subqueries with ORDER BY + LIMIT - could change results`, () => {
+      const subqueryWithLimitedOrder: QueryIR = {
+        from: new CollectionRef(mockCollection, `u`),
+        orderBy: [
+          { expression: createPropRef(`u`, `salary`), direction: `desc` },
+        ],
+        limit: 10, // Top 10 highest paid users
+      }
+
+      const query: QueryIR = {
+        from: new QueryRef(subqueryWithLimitedOrder, `top_users`),
+        join: [
+          {
+            from: new CollectionRef(mockCollection, `p`),
+            type: `inner`,
+            left: createPropRef(`top_users`, `id`),
+            right: createPropRef(`p`, `user_id`),
+          },
+        ],
+        where: [
+          createEq(createPropRef(`top_users`, `department_id`), createValue(1)), // Should NOT be pushed down
+        ],
+      }
+
+      const optimized = optimizeQuery(query)
+
+      // The WHERE clause should remain in the main query since pushing it down
+      // would change which users are in the "top 10"
+      expect(optimized.where).toHaveLength(1)
+      expect(optimized.where![0]).toEqual(
+        createEq(createPropRef(`top_users`, `department_id`), createValue(1))
+      )
+    })
+
+    test(`should safely optimize when subquery has SELECT but no aggregates/limits`, () => {
+      const subqueryWithSelect: QueryIR = {
+        from: new CollectionRef(mockCollection, `u`),
+        select: {
+          id: createPropRef(`u`, `id`),
+          name: createPropRef(`u`, `name`),
+          department_id: createPropRef(`u`, `department_id`),
+        },
+      }
+
+      const query: QueryIR = {
+        from: new QueryRef(subqueryWithSelect, `filtered_users`),
+        join: [
+          {
+            from: new CollectionRef(mockCollection, `p`),
+            type: `inner`,
+            left: createPropRef(`filtered_users`, `id`),
+            right: createPropRef(`p`, `user_id`),
+          },
+        ],
+        where: [
+          createEq(
+            createPropRef(`filtered_users`, `department_id`),
+            createValue(1)
+          ), // Can be pushed down safely
+        ],
+      }
+
+      const optimized = optimizeQuery(query)
+
+      // This should be optimized since SELECT without aggregates/limits is safe
+      expect(optimized.where).toEqual([])
+      expect(optimized.from.type).toBe(`queryRef`)
+      if (optimized.from.type === `queryRef`) {
+        expect(optimized.from.query.where).toContainEqual(
+          createEq(
+            createPropRef(`filtered_users`, `department_id`),
+            createValue(1)
+          )
+        )
+      }
+    })
+
+    test(`should not optimize subqueries with HAVING clauses`, () => {
+      const subqueryWithHaving: QueryIR = {
+        from: new CollectionRef(mockCollection, `u`),
+        select: {
+          department_id: createPropRef(`u`, `department_id`),
+          avg_salary: createAgg(`avg`, createPropRef(`u`, `salary`)),
+        },
+        groupBy: [createPropRef(`u`, `department_id`)],
+        having: [
+          createGt(
+            createAgg(`avg`, createPropRef(`u`, `salary`)),
+            createValue(50000)
+          ),
+        ],
+      }
+
+      const query: QueryIR = {
+        from: new QueryRef(subqueryWithHaving, `dept_stats`),
+        join: [
+          {
+            from: new CollectionRef(mockCollection, `p`),
+            type: `inner`,
+            left: createPropRef(`dept_stats`, `department_id`),
+            right: createPropRef(`p`, `department_id`),
+          },
+        ],
+        where: [
+          createGt(
+            createPropRef(`dept_stats`, `avg_salary`),
+            createValue(60000)
+          ),
+        ],
+      }
+
+      const optimized = optimizeQuery(query)
+
+      // Should not optimize due to HAVING clause
+      expect(optimized.where).toHaveLength(1)
+      expect(optimized.where![0]).toEqual(
+        createGt(createPropRef(`dept_stats`, `avg_salary`), createValue(60000))
+      )
+    })
+
+    test(`should not optimize subqueries with functional operations`, () => {
+      const subqueryWithFnSelect: QueryIR = {
+        from: new CollectionRef(mockCollection, `u`),
+        fnSelect: (row: any) => ({ ...row.u, computed: row.u.salary * 2 }),
+      }
+
+      const query: QueryIR = {
+        from: new QueryRef(subqueryWithFnSelect, `computed_users`),
+        join: [
+          {
+            from: new CollectionRef(mockCollection, `p`),
+            type: `inner`,
+            left: createPropRef(`computed_users`, `id`),
+            right: createPropRef(`p`, `user_id`),
+          },
+        ],
+        where: [
+          createEq(
+            createPropRef(`computed_users`, `department_id`),
+            createValue(1)
+          ),
+        ],
+      }
+
+      const optimized = optimizeQuery(query)
+
+      // Should not optimize due to functional operations that might have side effects
+      expect(optimized.where).toHaveLength(1)
+      expect(optimized.where![0]).toEqual(
+        createEq(
+          createPropRef(`computed_users`, `department_id`),
+          createValue(1)
+        )
+      )
+    })
+
+    test(`should safely optimize ORDER BY without LIMIT/OFFSET`, () => {
+      const subqueryWithOrderOnly: QueryIR = {
+        from: new CollectionRef(mockCollection, `u`),
+        orderBy: [{ expression: createPropRef(`u`, `name`), direction: `asc` }],
+        // No LIMIT or OFFSET - safe to optimize
+      }
+
+      const query: QueryIR = {
+        from: new QueryRef(subqueryWithOrderOnly, `sorted_users`),
+        join: [
+          {
+            from: new CollectionRef(mockCollection, `p`),
+            type: `inner`,
+            left: createPropRef(`sorted_users`, `id`),
+            right: createPropRef(`p`, `user_id`),
+          },
+        ],
+        where: [
+          createEq(
+            createPropRef(`sorted_users`, `department_id`),
+            createValue(1)
+          ),
+        ],
+      }
+
+      const optimized = optimizeQuery(query)
+
+      // Should optimize since ORDER BY without LIMIT/OFFSET is safe
+      expect(optimized.where).toEqual([])
+      expect(optimized.from.type).toBe(`queryRef`)
+      if (optimized.from.type === `queryRef`) {
+        expect(optimized.from.query.where).toContainEqual(
+          createEq(
+            createPropRef(`sorted_users`, `department_id`),
+            createValue(1)
+          )
+        )
+      }
+    })
+
+    test(`should handle mixed safe and unsafe subqueries correctly`, () => {
+      // Safe subquery - can be optimized
+      const safeSubquery: QueryIR = {
+        from: new CollectionRef(mockCollection, `u`),
+        select: {
+          id: createPropRef(`u`, `id`),
+          department_id: createPropRef(`u`, `department_id`),
+        },
+      }
+
+      // Unsafe subquery - cannot be optimized (has aggregates)
+      const unsafeSubquery: QueryIR = {
+        from: new CollectionRef(mockCollection, `d`),
+        select: {
+          department_id: createPropRef(`d`, `id`),
+          user_count: createAgg(`count`, createPropRef(`d`, `id`)),
+        },
+        groupBy: [createPropRef(`d`, `id`)],
+      }
+
+      const query: QueryIR = {
+        from: new QueryRef(safeSubquery, `users`),
+        join: [
+          {
+            from: new QueryRef(unsafeSubquery, `dept_stats`),
+            type: `inner`,
+            left: createPropRef(`users`, `department_id`),
+            right: createPropRef(`dept_stats`, `department_id`),
+          },
+        ],
+        where: [
+          createEq(createPropRef(`users`, `department_id`), createValue(1)), // Should be optimized
+          createGt(createPropRef(`dept_stats`, `user_count`), createValue(10)), // Should NOT be optimized
+        ],
+      }
+
+      const optimized = optimizeQuery(query)
+
+      // Only the unsafe clause should remain
+      expect(optimized.where).toHaveLength(1)
+      expect(optimized.where![0]).toEqual(
+        createGt(createPropRef(`dept_stats`, `user_count`), createValue(10))
+      )
+
+      // Safe subquery should be optimized
+      expect(optimized.from.type).toBe(`queryRef`)
+      if (optimized.from.type === `queryRef`) {
+        expect(optimized.from.query.where).toContainEqual(
+          createEq(createPropRef(`users`, `department_id`), createValue(1))
+        )
+      }
+    })
+  })
 })
