@@ -1,0 +1,460 @@
+/**
+ * # Query Optimizer
+ *
+ * The query optimizer improves query performance by implementing predicate pushdown optimization.
+ * It rewrites the intermediate representation (IR) to push WHERE clauses as close to the data
+ * source as possible, reducing the amount of data processed during joins.
+ *
+ * ## How It Works
+ *
+ * The optimizer follows a 4-step process:
+ *
+ * ### 1. AND Clause Splitting
+ * Splits AND clauses at the root level into separate WHERE clauses for granular optimization.
+ * ```javascript
+ * // Before: WHERE and(eq(users.department_id, 1), gt(users.age, 25))
+ * // After:  WHERE eq(users.department_id, 1) + WHERE gt(users.age, 25)
+ * ```
+ *
+ * ### 2. Source Analysis
+ * Analyzes each WHERE clause to determine which table sources it references:
+ * - Single-source clauses: Touch only one table (e.g., `users.department_id = 1`)
+ * - Multi-source clauses: Touch multiple tables (e.g., `users.id = posts.user_id`)
+ *
+ * ### 3. Clause Grouping
+ * Groups WHERE clauses by the sources they touch:
+ * - Single-source clauses are grouped by their respective table
+ * - Multi-source clauses are combined for the main query
+ *
+ * ### 4. Subquery Creation
+ * Lifts single-source WHERE clauses into subqueries that wrap the original table references.
+ *
+ * ## Example Optimization
+ *
+ * **Original Query:**
+ * ```javascript
+ * query
+ *   .from({ users: usersCollection })
+ *   .join({ posts: postsCollection }, ({users, posts}) => eq(users.id, posts.user_id))
+ *   .where(({users}) => eq(users.department_id, 1))
+ *   .where(({posts}) => gt(posts.views, 100))
+ *   .where(({users, posts}) => eq(users.id, posts.author_id))
+ * ```
+ *
+ * **Optimized Query:**
+ * ```javascript
+ * query
+ *   .from({
+ *     users: subquery
+ *       .from({ users: usersCollection })
+ *       .where(({users}) => eq(users.department_id, 1))
+ *   })
+ *   .join({
+ *     posts: subquery
+ *       .from({ posts: postsCollection })
+ *       .where(({posts}) => gt(posts.views, 100))
+ *   }, ({users, posts}) => eq(users.id, posts.user_id))
+ *   .where(({users, posts}) => eq(users.id, posts.author_id))
+ * ```
+ *
+ * ## Benefits
+ *
+ * - **Reduced Data Processing**: Filters applied before joins reduce intermediate result size
+ * - **Better Performance**: Smaller datasets lead to faster query execution
+ * - **Automatic Optimization**: No manual query rewriting required
+ * - **Preserves Semantics**: Optimized queries return identical results
+ *
+ * ## Integration
+ *
+ * The optimizer is automatically called during query compilation before the IR is
+ * transformed into a D2Mini pipeline.
+ */
+
+import {
+  CollectionRef as CollectionRefClass,
+  Func,
+  QueryRef as QueryRefClass,
+} from "./ir.js"
+import type { BasicExpression, From, QueryIR } from "./ir.js"
+
+/**
+ * Represents a WHERE clause after source analysis
+ */
+export interface AnalyzedWhereClause {
+  /** The WHERE expression */
+  expression: BasicExpression<boolean>
+  /** Set of table/source aliases that this WHERE clause touches */
+  touchedSources: Set<string>
+}
+
+/**
+ * Represents WHERE clauses grouped by the sources they touch
+ */
+export interface GroupedWhereClauses {
+  /** WHERE clauses that touch only a single source, grouped by source alias */
+  singleSource: Map<string, BasicExpression<boolean>>
+  /** WHERE clauses that touch multiple sources, combined into one expression */
+  multiSource?: BasicExpression<boolean>
+}
+
+/**
+ * Main query optimizer entry point that lifts WHERE clauses into subqueries.
+ *
+ * This function implements predicate pushdown optimization by moving single-source
+ * WHERE clauses into subqueries, reducing the amount of data processed during joins.
+ *
+ * @param query - The QueryIR to optimize
+ * @returns A new QueryIR with optimizations applied (or original if no optimization possible)
+ *
+ * @example
+ * ```typescript
+ * const originalQuery = {
+ *   from: new CollectionRef(users, 'u'),
+ *   join: [{ from: new CollectionRef(posts, 'p'), ... }],
+ *   where: [eq(u.dept_id, 1), gt(p.views, 100)]
+ * }
+ *
+ * const optimized = optimizeQuery(originalQuery)
+ * // Result: Single-source clauses moved to subqueries
+ * ```
+ */
+export function optimizeQuery(query: QueryIR): QueryIR {
+  // Skip optimization if no WHERE clauses exist
+  if (!query.where || query.where.length === 0) {
+    return query
+  }
+
+  // Skip optimization if there are no joins - predicate pushdown only benefits joins
+  // Single-table queries don't benefit from this optimization
+  if (!query.join || query.join.length === 0) {
+    return query
+  }
+
+  // Step 1: Split all AND clauses at the root level for granular optimization
+  const splitWhereClauses = splitAndClauses(query.where)
+
+  // Step 2: Analyze each WHERE clause to determine which sources it touches
+  const analyzedClauses = splitWhereClauses.map((clause) =>
+    analyzeWhereClause(clause)
+  )
+
+  // Step 3: Group clauses by single-source vs multi-source
+  const groupedClauses = groupWhereClauses(analyzedClauses)
+
+  // Step 4: Apply optimizations by lifting single-source clauses into subqueries
+  return applyOptimizations(query, groupedClauses)
+}
+
+/**
+ * Step 1: Split all AND clauses at the root level into separate WHERE clauses.
+ *
+ * This enables more granular optimization by treating each condition independently.
+ * OR clauses are preserved as they cannot be split without changing query semantics.
+ *
+ * @param whereClauses - Array of WHERE expressions to split
+ * @returns Flattened array with AND clauses split into separate expressions
+ *
+ * @example
+ * ```typescript
+ * // Input: [and(eq(a, 1), gt(b, 2)), eq(c, 3)]
+ * // Output: [eq(a, 1), gt(b, 2), eq(c, 3)]
+ * ```
+ */
+function splitAndClauses(
+  whereClauses: Array<BasicExpression<boolean>>
+): Array<BasicExpression<boolean>> {
+  const result: Array<BasicExpression<boolean>> = []
+
+  for (const clause of whereClauses) {
+    if (clause.type === `func` && clause.name === `and`) {
+      // Recursively split nested AND clauses to handle complex expressions
+      const splitArgs = splitAndClauses(
+        clause.args as Array<BasicExpression<boolean>>
+      )
+      result.push(...splitArgs)
+    } else {
+      // Preserve non-AND clauses as-is (including OR clauses)
+      result.push(clause)
+    }
+  }
+
+  return result
+}
+
+/**
+ * Step 2: Analyze which table sources a WHERE clause touches.
+ *
+ * This determines whether a clause can be pushed down to a specific table
+ * or must remain in the main query (for multi-source clauses like join conditions).
+ *
+ * @param clause - The WHERE expression to analyze
+ * @returns Analysis result with the expression and touched source aliases
+ *
+ * @example
+ * ```typescript
+ * // eq(users.department_id, 1) -> touches ['users']
+ * // eq(users.id, posts.user_id) -> touches ['users', 'posts']
+ * ```
+ */
+function analyzeWhereClause(
+  clause: BasicExpression<boolean>
+): AnalyzedWhereClause {
+  const touchedSources = new Set<string>()
+
+  /**
+   * Recursively collect all table aliases referenced in an expression
+   */
+  function collectSources(expr: BasicExpression | any): void {
+    switch (expr.type) {
+      case `ref`:
+        // PropRef path has the table alias as the first element
+        if (expr.path && expr.path.length > 0) {
+          const firstElement = expr.path[0]
+          if (firstElement) {
+            touchedSources.add(firstElement)
+          }
+        }
+        break
+      case `func`:
+        // Recursively analyze function arguments (e.g., eq, gt, and, or)
+        if (expr.args) {
+          expr.args.forEach(collectSources)
+        }
+        break
+      case `val`:
+        // Values don't reference any sources
+        break
+      case `agg`:
+        // Aggregates can reference sources in their arguments
+        if (expr.args) {
+          expr.args.forEach(collectSources)
+        }
+        break
+    }
+  }
+
+  collectSources(clause)
+
+  return {
+    expression: clause,
+    touchedSources,
+  }
+}
+
+/**
+ * Step 3: Group WHERE clauses by the sources they touch.
+ *
+ * Single-source clauses can be pushed down to subqueries for optimization.
+ * Multi-source clauses must remain in the main query to preserve join semantics.
+ *
+ * @param analyzedClauses - Array of analyzed WHERE clauses
+ * @returns Grouped clauses ready for optimization
+ */
+function groupWhereClauses(
+  analyzedClauses: Array<AnalyzedWhereClause>
+): GroupedWhereClauses {
+  const singleSource = new Map<string, Array<BasicExpression<boolean>>>()
+  const multiSource: Array<BasicExpression<boolean>> = []
+
+  // Categorize each clause based on how many sources it touches
+  for (const clause of analyzedClauses) {
+    if (clause.touchedSources.size === 1) {
+      // Single source clause - can be optimized
+      const source = Array.from(clause.touchedSources)[0]
+      if (source) {
+        if (!singleSource.has(source)) {
+          singleSource.set(source, [])
+        }
+        singleSource.get(source)!.push(clause.expression)
+      }
+    } else if (clause.touchedSources.size > 1) {
+      // Multi-source clause - must stay in main query
+      multiSource.push(clause.expression)
+    }
+    // Skip clauses that touch no sources (constants) - they don't need optimization
+  }
+
+  // Combine multiple clauses for each source with AND
+  const combinedSingleSource = new Map<string, BasicExpression<boolean>>()
+  for (const [source, clauses] of singleSource) {
+    combinedSingleSource.set(source, combineWithAnd(clauses))
+  }
+
+  // Combine multi-source clauses with AND
+  const combinedMultiSource =
+    multiSource.length > 0 ? combineWithAnd(multiSource) : undefined
+
+  return {
+    singleSource: combinedSingleSource,
+    multiSource: combinedMultiSource,
+  }
+}
+
+/**
+ * Step 4: Apply optimizations by lifting single-source clauses into subqueries.
+ *
+ * Creates a new QueryIR with single-source WHERE clauses moved to subqueries
+ * that wrap the original table references. This ensures immutability and prevents
+ * infinite recursion issues.
+ *
+ * @param query - Original QueryIR to optimize
+ * @param groupedClauses - WHERE clauses grouped by optimization strategy
+ * @returns New QueryIR with optimizations applied
+ */
+function applyOptimizations(
+  query: QueryIR,
+  groupedClauses: GroupedWhereClauses
+): QueryIR {
+  // Create a completely new query object to ensure immutability
+  // This prevents infinite recursion and shared reference issues
+  const optimizedQuery: QueryIR = {
+    // Copy all non-optimized fields as-is
+    select: query.select,
+    groupBy: query.groupBy ? [...query.groupBy] : undefined,
+    having: query.having ? [...query.having] : undefined,
+    orderBy: query.orderBy ? [...query.orderBy] : undefined,
+    limit: query.limit,
+    offset: query.offset,
+    fnSelect: query.fnSelect,
+    fnWhere: query.fnWhere ? [...query.fnWhere] : undefined,
+    fnHaving: query.fnHaving ? [...query.fnHaving] : undefined,
+
+    // Optimize the main FROM clause by potentially lifting WHERE clauses
+    from: optimizeFrom(query.from, groupedClauses.singleSource),
+
+    // Optimize JOIN clauses by potentially lifting WHERE clauses
+    join: query.join
+      ? query.join.map((joinClause) => ({
+          type: joinClause.type,
+          left: joinClause.left,
+          right: joinClause.right,
+          from: optimizeFrom(joinClause.from, groupedClauses.singleSource),
+        }))
+      : undefined,
+
+    // Update WHERE clause to only include multi-source clauses
+    // Single-source clauses have been moved to subqueries
+    where: groupedClauses.multiSource ? [groupedClauses.multiSource] : [],
+  }
+
+  return optimizedQuery
+}
+
+/**
+ * Helper function to create a deep copy of a QueryIR object for immutability.
+ *
+ * This ensures that all optimizations create new objects rather than modifying
+ * existing ones, preventing infinite recursion and shared reference issues.
+ *
+ * @param query - QueryIR to deep copy
+ * @returns New QueryIR object with all nested objects copied
+ */
+function deepCopyQuery(query: QueryIR): QueryIR {
+  return {
+    // Recursively copy the FROM clause
+    from:
+      query.from.type === `collectionRef`
+        ? new CollectionRefClass(query.from.collection, query.from.alias)
+        : new QueryRefClass(deepCopyQuery(query.from.query), query.from.alias),
+
+    // Copy all other fields, creating new arrays where necessary
+    select: query.select,
+    join: query.join
+      ? query.join.map((joinClause) => ({
+          type: joinClause.type,
+          left: joinClause.left,
+          right: joinClause.right,
+          from:
+            joinClause.from.type === `collectionRef`
+              ? new CollectionRefClass(
+                  joinClause.from.collection,
+                  joinClause.from.alias
+                )
+              : new QueryRefClass(
+                  deepCopyQuery(joinClause.from.query),
+                  joinClause.from.alias
+                ),
+        }))
+      : undefined,
+    where: query.where ? [...query.where] : undefined,
+    groupBy: query.groupBy ? [...query.groupBy] : undefined,
+    having: query.having ? [...query.having] : undefined,
+    orderBy: query.orderBy ? [...query.orderBy] : undefined,
+    limit: query.limit,
+    offset: query.offset,
+    fnSelect: query.fnSelect,
+    fnWhere: query.fnWhere ? [...query.fnWhere] : undefined,
+    fnHaving: query.fnHaving ? [...query.fnHaving] : undefined,
+  }
+}
+
+/**
+ * Helper function to optimize a FROM clause (CollectionRef or QueryRef).
+ *
+ * If the FROM clause has associated single-source WHERE clauses, they are
+ * lifted into a subquery. This ensures immutability by always returning
+ * new objects, even when no optimization is applied.
+ *
+ * @param from - FROM clause to optimize
+ * @param singleSourceClauses - Map of source aliases to their WHERE clauses
+ * @returns New FROM clause, potentially wrapped in a subquery
+ */
+function optimizeFrom(
+  from: From,
+  singleSourceClauses: Map<string, BasicExpression<boolean>>
+): From {
+  const whereClause = singleSourceClauses.get(from.alias)
+
+  if (!whereClause) {
+    // No optimization needed, but return a copy to maintain immutability
+    if (from.type === `collectionRef`) {
+      return new CollectionRefClass(from.collection, from.alias)
+    }
+    // Must be queryRef due to type system
+    return new QueryRefClass(deepCopyQuery(from.query), from.alias)
+  }
+
+  if (from.type === `collectionRef`) {
+    // Create a new subquery with the WHERE clause for the collection
+    const subQuery: QueryIR = {
+      from: new CollectionRefClass(from.collection, from.alias),
+      where: [whereClause],
+    }
+    return new QueryRefClass(subQuery, from.alias)
+  }
+
+  // Must be queryRef due to type system
+  // Add the WHERE clause to the existing subquery
+  // Create a deep copy to ensure immutability
+  const existingWhere = from.query.where || []
+  const optimizedSubQuery: QueryIR = {
+    ...deepCopyQuery(from.query),
+    where: [...existingWhere, whereClause],
+  }
+  return new QueryRefClass(optimizedSubQuery, from.alias)
+}
+
+/**
+ * Helper function to combine multiple expressions with AND.
+ *
+ * If there's only one expression, it's returned as-is.
+ * If there are multiple expressions, they're combined with an AND function.
+ *
+ * @param expressions - Array of expressions to combine
+ * @returns Single expression representing the AND combination
+ * @throws Error if the expressions array is empty
+ */
+function combineWithAnd(
+  expressions: Array<BasicExpression<boolean>>
+): BasicExpression<boolean> {
+  if (expressions.length === 0) {
+    throw new Error(`Cannot combine empty expression list`)
+  }
+
+  if (expressions.length === 1) {
+    return expressions[0]!
+  }
+
+  // Create an AND function with all expressions as arguments
+  return new Func(`and`, expressions)
+}
