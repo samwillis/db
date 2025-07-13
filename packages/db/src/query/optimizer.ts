@@ -115,6 +115,7 @@
  * transformed into a D2Mini pipeline.
  */
 
+import { deepEquals } from "../utils.js"
 import {
   CollectionRef as CollectionRefClass,
   Func,
@@ -741,13 +742,9 @@ function combineWithAnd(
 }
 
 /**
- * Simple query equality check using JSON serialization
+ * Deep equality check for QueryIR objects
  */
 function areQueriesEqual(query1: QueryIR, query2: QueryIR | null): boolean {
   if (query2 === null) return false
-  try {
-    return JSON.stringify(query1) === JSON.stringify(query2)
-  } catch {
-    return false
-  }
+  return deepEquals(query1, query2)
 }

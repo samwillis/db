@@ -7,23 +7,13 @@ import {
 import { compileExpression } from "./evaluators.js"
 import { compileQuery } from "./index.js"
 import type { IStreamBuilder, JoinType } from "@electric-sql/d2mini"
-import type { CollectionRef, JoinClause, QueryIR, QueryRef } from "../ir.js"
+import type { CollectionRef, JoinClause, QueryRef } from "../ir.js"
 import type {
   KeyedStream,
   NamespacedAndKeyedStream,
   NamespacedRow,
-  ResultStream,
 } from "../../types.js"
-
-/**
- * Cache for compiled subqueries to avoid duplicate compilation
- */
-type QueryCache = WeakMap<QueryIR, ResultStream>
-
-/**
- * Mapping from optimized queries back to their original queries for caching
- */
-type QueryMapping = WeakMap<QueryIR, QueryIR>
+import type { QueryCache, QueryMapping } from "./types.js"
 
 /**
  * Processes all join clauses in a query

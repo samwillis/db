@@ -11,16 +11,7 @@ import type {
   NamespacedAndKeyedStream,
   ResultStream,
 } from "../../types.js"
-
-/**
- * Cache for compiled subqueries to avoid duplicate compilation
- */
-type QueryCache = WeakMap<QueryIR, ResultStream>
-
-/**
- * Mapping from optimized queries back to their original queries for caching
- */
-type QueryMapping = WeakMap<QueryIR, QueryIR>
+import type { QueryCache, QueryMapping } from "./types.js"
 
 /**
  * Compiles a query2 IR into a D2 pipeline
