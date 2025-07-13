@@ -30,6 +30,7 @@ import type {
 } from "./types"
 import type { StandardSchemaV1 } from "@standard-schema/spec"
 import type { SingleRowRefProxy } from "./query/builder/ref-proxy"
+import type { BasicExpression } from "./query/ir"
 
 // Store collections in memory
 export const collectionsStore = new Map<string, CollectionImpl<any, any>>()
@@ -2213,72 +2214,22 @@ export class CollectionImpl<
       // Convert the result to a BasicExpression
       const expression = toExpression(whereExpression)
 
-      // Try to find a matching index for simple comparisons
-      let usedIndex = false
-      if (expression.type === `func` && expression.args.length === 2) {
-        const leftArg = expression.args[0]
-        const rightArg = expression.args[1]
+      // Try to optimize the query using indexes
+      const optimizationResult = this.optimizeQuery(expression)
 
-        // Check if this is a simple field comparison: field op value
-        if (
-          leftArg &&
-          leftArg.type === `ref` &&
-          rightArg &&
-          rightArg.type === `val`
-        ) {
-          const fieldPath = leftArg.path
-          const operation = expression.name as
-            | `eq`
-            | `gt`
-            | `gte`
-            | `lt`
-            | `lte`
-
-          // Find an index that matches this field
-          for (const index of this.indexes.values()) {
-            if (
-              index.expression.type === `ref` &&
-              index.expression.path.length === fieldPath.length &&
-              index.expression.path.every((part, i) => part === fieldPath[i])
-            ) {
-              // Found a matching index! Use it for fast lookup
-              const queryValue = rightArg.value
-              let matchingKeys: Set<TKey>
-
-              // Support different comparison operations
-              switch (operation) {
-                case `eq`:
-                case `gt`:
-                case `gte`:
-                case `lt`:
-                case `lte`:
-                  matchingKeys = this.rangeQuery(index, operation, queryValue)
-                  break
-                default:
-                  // Unsupported operation, fall back to full scan
-                  continue
-              }
-
-              // Add matching items to results
-              for (const key of matchingKeys) {
-                const value = this.get(key)
-                if (value !== undefined) {
-                  result.push({
-                    type: `insert`,
-                    key,
-                    value,
-                  })
-                }
-              }
-
-              usedIndex = true
-              break
-            }
+      if (optimizationResult.canOptimize) {
+        // Use index optimization
+        for (const key of optimizationResult.matchingKeys) {
+          const value = this.get(key)
+          if (value !== undefined) {
+            result.push({
+              type: `insert`,
+              key,
+              value,
+            })
           }
         }
-      }
-
-      if (!usedIndex) {
+      } else {
         // No index found or complex expression, fall back to full scan with filter
         const filterFn = this.createFilterFunction(options.where)
 
@@ -2313,6 +2264,401 @@ export class CollectionImpl<
     }
 
     return result
+  }
+
+  /**
+   * Optimizes a query expression using available indexes
+   * @private
+   */
+  private optimizeQuery(expression: BasicExpression): {
+    canOptimize: boolean
+    matchingKeys: Set<TKey>
+  } {
+    return this.optimizeQueryRecursive(expression)
+  }
+
+  /**
+   * Recursively optimizes query expressions
+   * @private
+   */
+  private optimizeQueryRecursive(expression: BasicExpression): {
+    canOptimize: boolean
+    matchingKeys: Set<TKey>
+  } {
+    if (expression.type === `func`) {
+      switch (expression.name) {
+        case `eq`:
+        case `gt`:
+        case `gte`:
+        case `lt`:
+        case `lte`:
+          return this.optimizeSimpleComparison(expression)
+
+        case `and`:
+          return this.optimizeAndExpression(expression)
+
+        case `or`:
+          return this.optimizeOrExpression(expression)
+
+        case `in`:
+          return this.optimizeInArrayExpression(expression)
+
+        default:
+          return { canOptimize: false, matchingKeys: new Set() }
+      }
+    }
+
+    return { canOptimize: false, matchingKeys: new Set() }
+  }
+
+  /**
+   * Checks if an expression can be optimized without actually performing the optimization
+   * This is used to avoid making index calls when we know we'll fall back to full scan
+   * @private
+   */
+  private canOptimizeExpression(expression: BasicExpression): boolean {
+    if (expression.type === `func`) {
+      switch (expression.name) {
+        case `eq`:
+        case `gt`:
+        case `gte`:
+        case `lt`:
+        case `lte`:
+          return this.canOptimizeSimpleComparison(expression)
+
+        case `and`:
+          return this.canOptimizeAndExpression(expression)
+
+        case `or`:
+          return this.canOptimizeOrExpression(expression)
+
+        case `in`:
+          return this.canOptimizeInArrayExpression(expression)
+
+        default:
+          return false
+      }
+    }
+
+    return false
+  }
+
+  /**
+   * Checks if a simple comparison can be optimized
+   * @private
+   */
+  private canOptimizeSimpleComparison(expression: BasicExpression): boolean {
+    if (
+      expression.type !== `func` ||
+      !expression.args ||
+      expression.args.length !== 2
+    ) {
+      return false
+    }
+
+    const leftArg = expression.args[0]
+    const rightArg = expression.args[1]
+
+    // Check if this is a simple field comparison: field op value
+
+    if (
+      leftArg &&
+      leftArg.type === `ref` &&
+      rightArg &&
+      rightArg.type === `val`
+    ) {
+      const fieldPath = leftArg.path
+
+      // Find an index that matches this field
+      for (const index of this.indexes.values()) {
+        if (
+          index.expression.type === `ref` &&
+          index.expression.path.length === fieldPath.length &&
+          index.expression.path.every((part, i) => part === fieldPath[i])
+        ) {
+          return true
+        }
+      }
+    }
+
+    return false
+  }
+
+  /**
+   * Checks if an AND expression can be optimized
+   * @private
+   */
+  private canOptimizeAndExpression(expression: BasicExpression): boolean {
+    if (
+      expression.type !== `func` ||
+      !expression.args ||
+      expression.args.length < 2
+    ) {
+      return false
+    }
+
+    // All arguments must be optimizable
+    return expression.args.every((arg) => this.canOptimizeExpression(arg))
+  }
+
+  /**
+   * Checks if an OR expression can be optimized
+   * @private
+   */
+  private canOptimizeOrExpression(expression: BasicExpression): boolean {
+    if (
+      expression.type !== `func` ||
+      !expression.args ||
+      expression.args.length < 2
+    ) {
+      return false
+    }
+
+    // All arguments must be optimizable
+    return expression.args.every((arg) => this.canOptimizeExpression(arg))
+  }
+
+  /**
+   * Checks if an inArray expression can be optimized
+   * @private
+   */
+  private canOptimizeInArrayExpression(expression: BasicExpression): boolean {
+    if (
+      expression.type !== `func` ||
+      !expression.args ||
+      expression.args.length !== 2
+    ) {
+      return false
+    }
+
+    const fieldArg = expression.args[0]
+    const arrayArg = expression.args[1]
+
+    // Check if this is a field IN array comparison
+
+    if (
+      fieldArg &&
+      fieldArg.type === `ref` &&
+      arrayArg &&
+      arrayArg.type === `val` &&
+      Array.isArray(arrayArg.value)
+    ) {
+      const fieldPath = fieldArg.path
+
+      // Find an index that matches this field
+      for (const index of this.indexes.values()) {
+        if (
+          index.expression.type === `ref` &&
+          index.expression.path.length === fieldPath.length &&
+          index.expression.path.every((part, i) => part === fieldPath[i])
+        ) {
+          return true
+        }
+      }
+    }
+
+    return false
+  }
+
+  /**
+   * Optimizes simple comparison expressions (eq, gt, gte, lt, lte)
+   * @private
+   */
+  private optimizeSimpleComparison(expression: BasicExpression): {
+    canOptimize: boolean
+    matchingKeys: Set<TKey>
+  } {
+    if (
+      expression.type !== `func` ||
+      !expression.args ||
+      expression.args.length !== 2
+    ) {
+      return { canOptimize: false, matchingKeys: new Set() }
+    }
+
+    const leftArg = expression.args[0]
+    const rightArg = expression.args[1]
+
+    // Check if this is a simple field comparison: field op value
+
+    if (
+      leftArg &&
+      leftArg.type === `ref` &&
+      rightArg &&
+      rightArg.type === `val`
+    ) {
+      const fieldPath = leftArg.path
+      const operation = expression.name as `eq` | `gt` | `gte` | `lt` | `lte`
+
+      // Find an index that matches this field
+      for (const index of this.indexes.values()) {
+        if (
+          index.expression.type === `ref` &&
+          index.expression.path.length === fieldPath.length &&
+          index.expression.path.every((part, i) => part === fieldPath[i])
+        ) {
+          // Found a matching index! Use it for fast lookup
+          const queryValue = rightArg.value
+          const matchingKeys = this.rangeQuery(index, operation, queryValue)
+          return { canOptimize: true, matchingKeys }
+        }
+      }
+    }
+
+    return { canOptimize: false, matchingKeys: new Set() }
+  }
+
+  /**
+   * Optimizes AND expressions by intersecting results from multiple conditions
+   * @private
+   */
+  private optimizeAndExpression(expression: BasicExpression): {
+    canOptimize: boolean
+    matchingKeys: Set<TKey>
+  } {
+    if (
+      expression.type !== `func` ||
+      !expression.args ||
+      expression.args.length < 2
+    ) {
+      return { canOptimize: false, matchingKeys: new Set() }
+    }
+
+    // First, check if all arguments CAN be optimized without actually doing the optimization
+    // This avoids making index calls if we're going to fall back to full scan anyway
+    const canOptimizeAll = expression.args.every((arg) =>
+      this.canOptimizeExpression(arg)
+    )
+
+    if (!canOptimizeAll) {
+      return { canOptimize: false, matchingKeys: new Set() }
+    }
+
+    // Now that we know all can be optimized, actually do the optimization
+    const results: Array<{ canOptimize: boolean; matchingKeys: Set<TKey> }> = []
+
+    for (const arg of expression.args) {
+      const result = this.optimizeQueryRecursive(arg)
+      results.push(result)
+    }
+
+    if (results.length > 0) {
+      // Intersect all matching keys (AND logic)
+      let intersectedKeys = results[0]!.matchingKeys
+      for (let i = 1; i < results.length; i++) {
+        const newIntersection = new Set<TKey>()
+        for (const key of intersectedKeys) {
+          if (results[i]!.matchingKeys.has(key)) {
+            newIntersection.add(key)
+          }
+        }
+        intersectedKeys = newIntersection
+      }
+
+      return { canOptimize: true, matchingKeys: intersectedKeys }
+    }
+
+    return { canOptimize: false, matchingKeys: new Set() }
+  }
+
+  /**
+   * Optimizes OR expressions by unioning results from multiple conditions
+   * @private
+   */
+  private optimizeOrExpression(expression: BasicExpression): {
+    canOptimize: boolean
+    matchingKeys: Set<TKey>
+  } {
+    if (
+      expression.type !== `func` ||
+      !expression.args ||
+      expression.args.length < 2
+    ) {
+      return { canOptimize: false, matchingKeys: new Set() }
+    }
+
+    // First, check if all arguments CAN be optimized without actually doing the optimization
+    const canOptimizeAll = expression.args.every((arg) =>
+      this.canOptimizeExpression(arg)
+    )
+
+    if (!canOptimizeAll) {
+      return { canOptimize: false, matchingKeys: new Set() }
+    }
+
+    // Now that we know all can be optimized, actually do the optimization
+    const results: Array<{ canOptimize: boolean; matchingKeys: Set<TKey> }> = []
+
+    for (const arg of expression.args) {
+      const result = this.optimizeQueryRecursive(arg)
+      results.push(result)
+    }
+
+    // Union all matching keys (OR logic)
+    const unionedKeys = new Set<TKey>()
+    for (const result of results) {
+      for (const key of result.matchingKeys) {
+        unionedKeys.add(key)
+      }
+    }
+
+    return { canOptimize: true, matchingKeys: unionedKeys }
+  }
+
+  /**
+   * Optimizes inArray expressions
+   * @private
+   */
+  private optimizeInArrayExpression(expression: BasicExpression): {
+    canOptimize: boolean
+    matchingKeys: Set<TKey>
+  } {
+    if (
+      expression.type !== `func` ||
+      !expression.args ||
+      expression.args.length !== 2
+    ) {
+      return { canOptimize: false, matchingKeys: new Set() }
+    }
+
+    const fieldArg = expression.args[0]
+    const arrayArg = expression.args[1]
+
+    // Check if this is a field IN array comparison
+
+    if (
+      fieldArg &&
+      fieldArg.type === `ref` &&
+      arrayArg &&
+      arrayArg.type === `val` &&
+      Array.isArray(arrayArg.value)
+    ) {
+      const fieldPath = fieldArg.path
+      const values = arrayArg.value
+
+      // Find an index that matches this field
+      for (const index of this.indexes.values()) {
+        if (
+          index.expression.type === `ref` &&
+          index.expression.path.length === fieldPath.length &&
+          index.expression.path.every((part, i) => part === fieldPath[i])
+        ) {
+          // Found a matching index! Use it for fast lookup of each value
+          const matchingKeys = new Set<TKey>()
+
+          for (const value of values) {
+            const keysForValue = this.rangeQuery(index, `eq`, value)
+            for (const key of keysForValue) {
+              matchingKeys.add(key)
+            }
+          }
+
+          return { canOptimize: true, matchingKeys }
+        }
+      }
+    }
+
+    return { canOptimize: false, matchingKeys: new Set() }
   }
 
   /**

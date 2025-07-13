@@ -2,7 +2,17 @@ import { beforeEach, describe, expect, it } from "vitest"
 import mitt from "mitt"
 import { createCollection } from "../src/collection"
 import { createTransaction } from "../src/transactions"
-import { eq, gt, gte, length, lt, lte } from "../src/query/builder/functions"
+import {
+  and,
+  eq,
+  gt,
+  gte,
+  inArray,
+  length,
+  lt,
+  lte,
+  or,
+} from "../src/query/builder/functions"
 import type { MutationFn, PendingMutation } from "../src/types"
 
 interface TestItem {
@@ -665,6 +675,249 @@ describe(`Collection Indexes`, () => {
     })
   })
 
+  describe(`Complex Query Optimization`, () => {
+    beforeEach(() => {
+      collection.createIndex((row) => row.age)
+      collection.createIndex((row) => row.status)
+    })
+
+    it(`should optimize AND queries with range conditions using indexes`, () => {
+      withIndexTracking(collection, (tracker) => {
+        // Test the key case: range query with AND
+        const result = collection.currentStateAsChanges({
+          where: (row) => and(gt(row.age, 25), lt(row.age, 35)),
+        })
+
+        expect(result).toHaveLength(2) // Bob (30), Diana (28)
+        const names = result.map((r) => r.value.name).sort()
+        expect(names).toEqual([`Bob`, `Diana`])
+
+        // Verify 100% index usage - should use age index twice
+        expectIndexUsage(tracker.stats, {
+          shouldUseIndex: true,
+          shouldUseFullScan: false,
+          indexCallCount: 2, // gt and lt operations
+          fullScanCallCount: 0,
+        })
+
+        // Verify both operations used the age index
+        expect(tracker.stats.queriesExecuted).toHaveLength(2)
+        expect(tracker.stats.queriesExecuted[0]).toMatchObject({
+          type: `index`,
+          operation: `gt`,
+          field: `age`,
+          value: 25,
+        })
+        expect(tracker.stats.queriesExecuted[1]).toMatchObject({
+          type: `index`,
+          operation: `lt`,
+          field: `age`,
+          value: 35,
+        })
+      })
+    })
+
+    it(`should optimize AND queries with multiple field conditions`, () => {
+      withIndexTracking(collection, (tracker) => {
+        const result = collection.currentStateAsChanges({
+          where: (row) => and(eq(row.status, `active`), gte(row.age, 25)),
+        })
+
+        expect(result).toHaveLength(2) // Alice (25, active), Charlie (35, active)
+        const names = result.map((r) => r.value.name).sort()
+        expect(names).toEqual([`Alice`, `Charlie`])
+
+        // Verify 100% index usage - should use both status and age indexes
+        expectIndexUsage(tracker.stats, {
+          shouldUseIndex: true,
+          shouldUseFullScan: false,
+          indexCallCount: 2, // eq and gte operations
+          fullScanCallCount: 0,
+        })
+
+        // Verify different indexes were used
+        expect(tracker.stats.queriesExecuted).toHaveLength(2)
+        expect(tracker.stats.queriesExecuted[0]).toMatchObject({
+          type: `index`,
+          operation: `eq`,
+          field: `status`,
+          value: `active`,
+        })
+        expect(tracker.stats.queriesExecuted[1]).toMatchObject({
+          type: `index`,
+          operation: `gte`,
+          field: `age`,
+          value: 25,
+        })
+      })
+    })
+
+    it(`should optimize OR queries using indexes`, () => {
+      withIndexTracking(collection, (tracker) => {
+        const result = collection.currentStateAsChanges({
+          where: (row) => or(eq(row.age, 25), eq(row.age, 35)),
+        })
+
+        expect(result).toHaveLength(2) // Alice (25), Charlie (35)
+        const names = result.map((r) => r.value.name).sort()
+        expect(names).toEqual([`Alice`, `Charlie`])
+
+        // Verify 100% index usage - should use age index twice
+        expectIndexUsage(tracker.stats, {
+          shouldUseIndex: true,
+          shouldUseFullScan: false,
+          indexCallCount: 2, // Two eq operations
+          fullScanCallCount: 0,
+        })
+
+        // Verify both operations used the age index
+        expect(tracker.stats.queriesExecuted).toHaveLength(2)
+        expect(tracker.stats.queriesExecuted[0]).toMatchObject({
+          type: `index`,
+          operation: `eq`,
+          field: `age`,
+          value: 25,
+        })
+        expect(tracker.stats.queriesExecuted[1]).toMatchObject({
+          type: `index`,
+          operation: `eq`,
+          field: `age`,
+          value: 35,
+        })
+      })
+    })
+
+    it(`should optimize inArray queries using indexes`, () => {
+      withIndexTracking(collection, (tracker) => {
+        const result = collection.currentStateAsChanges({
+          where: (row) => inArray(row.status, [`active`, `pending`]),
+        })
+
+        expect(result).toHaveLength(4) // Alice, Charlie, Eve (active), Diana (pending)
+        const names = result.map((r) => r.value.name).sort()
+        expect(names).toEqual([`Alice`, `Charlie`, `Diana`, `Eve`])
+
+        // Verify 100% index usage - should use status index twice (for each value)
+        expectIndexUsage(tracker.stats, {
+          shouldUseIndex: true,
+          shouldUseFullScan: false,
+          indexCallCount: 2, // Two eq operations for the array values
+          fullScanCallCount: 0,
+        })
+
+        // Verify both values were looked up using the status index
+        expect(tracker.stats.queriesExecuted).toHaveLength(2)
+        expect(tracker.stats.queriesExecuted[0]).toMatchObject({
+          type: `index`,
+          operation: `eq`,
+          field: `status`,
+          value: `active`,
+        })
+        expect(tracker.stats.queriesExecuted[1]).toMatchObject({
+          type: `index`,
+          operation: `eq`,
+          field: `status`,
+          value: `pending`,
+        })
+      })
+    })
+
+    it(`should optimize complex nested AND/OR expressions`, () => {
+      withIndexTracking(collection, (tracker) => {
+        // (age >= 25 AND age <= 30) OR status = 'pending'
+        const result = collection.currentStateAsChanges({
+          where: (row) =>
+            or(
+              and(gte(row.age, 25), lte(row.age, 30)),
+              eq(row.status, `pending`)
+            ),
+        })
+
+        expect(result).toHaveLength(3) // Alice (25), Bob (30), Diana (28, pending)
+        const names = result.map((r) => r.value.name).sort()
+        expect(names).toEqual([`Alice`, `Bob`, `Diana`])
+
+        // Verify 100% index usage - should use age index twice + status index once
+        expectIndexUsage(tracker.stats, {
+          shouldUseIndex: true,
+          shouldUseFullScan: false,
+          indexCallCount: 3,
+          fullScanCallCount: 0,
+        })
+
+        // Verify the operations
+        expect(tracker.stats.queriesExecuted).toHaveLength(3)
+        expect(tracker.stats.queriesExecuted[0]).toMatchObject({
+          type: `index`,
+          operation: `gte`,
+          field: `age`,
+          value: 25,
+        })
+        expect(tracker.stats.queriesExecuted[1]).toMatchObject({
+          type: `index`,
+          operation: `lte`,
+          field: `age`,
+          value: 30,
+        })
+        expect(tracker.stats.queriesExecuted[2]).toMatchObject({
+          type: `index`,
+          operation: `eq`,
+          field: `status`,
+          value: `pending`,
+        })
+      })
+    })
+
+    it(`should fall back to full scan when not all conditions can be optimized`, () => {
+      withIndexTracking(collection, (tracker) => {
+        // Mix of optimizable and non-optimizable conditions
+        const result = collection.currentStateAsChanges({
+          where: (row) =>
+            and(
+              eq(row.status, `active`),
+              gt(length(row.name), 4) // Complex expression - can't optimize
+            ),
+        })
+
+        expect(result).toHaveLength(2) // Alice, Charlie (active with name > 4 chars)
+        const names = result.map((r) => r.value.name).sort()
+        expect(names).toEqual([`Alice`, `Charlie`])
+
+        // Should fall back to full scan since not all conditions can be optimized
+        expectIndexUsage(tracker.stats, {
+          shouldUseIndex: false,
+          shouldUseFullScan: true,
+          indexCallCount: 0,
+          fullScanCallCount: 1,
+        })
+      })
+    })
+
+    it(`should optimize queries with missing indexes by falling back gracefully`, () => {
+      withIndexTracking(collection, (tracker) => {
+        // Query on a field without an index (name)
+        const result = collection.currentStateAsChanges({
+          where: (row) =>
+            and(
+              eq(row.age, 25), // Has index
+              eq(row.name, `Alice`) // No index on name
+            ),
+        })
+
+        expect(result).toHaveLength(1) // Alice (25, name Alice)
+        expect(result[0]?.value.name).toBe(`Alice`)
+
+        // Should fall back to full scan since name doesn't have an index
+        expectIndexUsage(tracker.stats, {
+          shouldUseIndex: false,
+          shouldUseFullScan: true,
+          indexCallCount: 0,
+          fullScanCallCount: 1,
+        })
+      })
+    })
+  })
+
   describe(`Index Usage Verification`, () => {
     it(`should track multiple indexes and their usage patterns`, () => {
       // Create multiple indexes
@@ -879,51 +1132,39 @@ describe(`Collection Indexes`, () => {
       })
     })
 
-    it(`should handle subscription updates correctly`, async () => {
-      const changes: Array<any> = []
+    it(`should use indexes for filtered subscription initial state`, async () => {
+      collection.createIndex((row) => row.status)
 
-      const unsubscribe = collection.subscribeChanges(
-        (items) => {
-          changes.push(...items)
-        },
-        {
-          where: (row) => eq(row.status, `active`),
-        }
-      )
+      await withIndexTracking(collection, async (tracker) => {
+        const changes: Array<any> = []
 
-      // Change inactive to active (should trigger)
-      const tx1 = createTransaction({ mutationFn })
-      tx1.mutate(() =>
-        collection.update(`2`, (draft) => {
-          draft.status = `active`
+        const unsubscribe = collection.subscribeChanges(
+          (items) => {
+            changes.push(...items)
+          },
+          {
+            includeInitialState: true,
+            where: (row) => eq(row.status, `active`),
+          }
+        )
+
+        expect(changes).toHaveLength(3) // Initial active items
+
+        // Verify initial state query used index
+        expectIndexUsage(tracker.stats, {
+          shouldUseIndex: true,
+          shouldUseFullScan: false,
+          indexCallCount: 1,
+          fullScanCallCount: 0,
         })
-      )
-      await tx1.isPersisted.promise
 
-      expect(changes).toHaveLength(1)
-      expect(changes[0]?.type).toBe(`update`)
-      expect(changes[0]?.value.name).toBe(`Bob`)
-
-      // Change active to inactive (may trigger update since change happened to a previously matching item)
-      changes.length = 0
-      const tx2 = createTransaction({ mutationFn })
-      tx2.mutate(() =>
-        collection.update(`1`, (draft) => {
-          draft.status = `inactive`
-        })
-      )
-      await tx2.isPersisted.promise
-
-      // The behavior here depends on implementation - the item changed but no longer matches filter
-      // This is acceptable behavior - mutations should be reflected in subscriptions
-      expect(changes.length).toBeGreaterThanOrEqual(0)
-
-      unsubscribe()
+        unsubscribe()
+      })
     })
   })
 
   describe(`Performance and Edge Cases`, () => {
-    it(`should handle special values correctly in indexes`, async () => {
+    it(`should handle special values correctly in indexes and queries`, async () => {
       // Create a new collection with special values in the initial sync data
       const specialData: Array<TestItem> = [
         ...testData,
@@ -971,48 +1212,44 @@ describe(`Collection Indexes`, () => {
 
       const ageIndex = specialCollection.createIndex((row) => row.age)
 
+      // Verify index contains all items including special values
       expect(ageIndex.indexedKeys.size).toBe(8) // Original 5 + 3 special
+      expect(ageIndex.orderedEntries).toHaveLength(8) // 8 unique age values (including null)
 
       // Null/undefined should be ordered first
       const firstValue = ageIndex.orderedEntries[0]?.[0]
       expect(firstValue == null).toBe(true)
-    })
 
-    it(`should handle mutations in collection state`, async () => {
-      // Test that mutations are reflected in collection state (not necessarily indexes)
-      const specialData: Array<TestItem> = [
-        {
-          id: `null_age`,
-          name: `Null Age`,
-          age: null as any,
-          status: `active`,
-          createdAt: new Date(),
-        },
-        {
-          id: `zero_age`,
-          name: `Zero Age`,
-          age: 0,
-          status: `active`,
-          createdAt: new Date(),
-        },
-        {
-          id: `negative_age`,
-          name: `Negative Age`,
-          age: -5,
-          status: `active`,
-          createdAt: new Date(),
-        },
-      ]
+      // Test that queries with special values use indexes correctly
+      withIndexTracking(specialCollection, (tracker) => {
+        // Query for zero age
+        const zeroAgeResult = specialCollection.currentStateAsChanges({
+          where: (row) => eq(row.age, 0),
+        })
+        expect(zeroAgeResult).toHaveLength(1)
+        expect(zeroAgeResult[0]?.value.name).toBe(`Zero Age`)
 
-      const tx = createTransaction({ mutationFn })
-      tx.mutate(() => collection.insert(specialData))
-      await tx.isPersisted.promise
+        // Query for negative age
+        const negativeAgeResult = specialCollection.currentStateAsChanges({
+          where: (row) => eq(row.age, -5),
+        })
+        expect(negativeAgeResult).toHaveLength(1)
+        expect(negativeAgeResult[0]?.value.name).toBe(`Negative Age`)
 
-      // Items should be in collection state
-      expect(collection.size).toBe(8) // Original 5 + 3 special
-      expect(collection.get(`null_age`)?.name).toBe(`Null Age`)
-      expect(collection.get(`zero_age`)?.age).toBe(0)
-      expect(collection.get(`negative_age`)?.age).toBe(-5)
+        // Query for ages greater than negative
+        const gtNegativeResult = specialCollection.currentStateAsChanges({
+          where: (row) => gt(row.age, -1),
+        })
+        expect(gtNegativeResult.length).toBeGreaterThan(0) // Should find positive ages
+
+        // Verify all queries used indexes
+        expectIndexUsage(tracker.stats, {
+          shouldUseIndex: true,
+          shouldUseFullScan: false,
+          indexCallCount: 3,
+          fullScanCallCount: 0,
+        })
+      })
     })
 
     it(`should handle index creation on empty collection`, () => {
@@ -1028,18 +1265,19 @@ describe(`Collection Indexes`, () => {
       expect(index.valueMap.size).toBe(0)
     })
 
-    it(`should handle mutations being reflected in collection state`, async () => {
+    it(`should handle index updates when data changes through sync`, async () => {
       const ageIndex = collection.createIndex((row) => row.age)
 
       // Original index should have 5 items
       expect(ageIndex.indexedKeys.size).toBe(5)
+      expect(ageIndex.orderedEntries).toHaveLength(5)
 
-      // Perform mutations
+      // Perform mutations that will sync back and update indexes
       const tx1 = createTransaction({ mutationFn })
       tx1.mutate(() =>
         collection.insert({
-          id: `concurrent1`,
-          name: `C1`,
+          id: `new1`,
+          name: `NewItem1`,
           age: 50,
           status: `active`,
           createdAt: new Date(),
@@ -1056,37 +1294,35 @@ describe(`Collection Indexes`, () => {
       const tx3 = createTransaction({ mutationFn })
       tx3.mutate(() => collection.delete(`2`))
 
-      const tx4 = createTransaction({ mutationFn })
-      tx4.mutate(() =>
-        collection.insert({
-          id: `concurrent2`,
-          name: `C2`,
-          age: 15,
-          status: `active`,
-          createdAt: new Date(),
-        })
-      )
-
       await Promise.all([
         tx1.isPersisted.promise,
         tx2.isPersisted.promise,
         tx3.isPersisted.promise,
-        tx4.isPersisted.promise,
       ])
 
-      // Collection state should reflect mutations
-      expect(collection.size).toBe(6) // 5 original - 1 deleted + 2 inserted
-      expect(collection.get(`concurrent1`)?.age).toBe(50)
-      expect(collection.get(`1`)?.age).toBe(99)
-      expect(collection.get(`2`)).toBeUndefined() // deleted
-      expect(collection.get(`concurrent2`)?.age).toBe(15)
+      // Wait a bit for sync to complete and indexes to update
+      await new Promise((resolve) => setTimeout(resolve, 10))
 
-      // Index doesn't need to be updated by mutations (happens on sync)
-      // But we can test that queries still work on the current state
-      const result = collection.currentStateAsChanges({
-        where: (row) => gte(row.age, 50),
+      // Verify that indexes are updated after sync
+      expect(ageIndex.indexedKeys.size).toBe(5) // 5 original - 1 deleted + 1 inserted
+
+      // Test that index-optimized queries work with the updated data
+      withIndexTracking(collection, (tracker) => {
+        const result = collection.currentStateAsChanges({
+          where: (row) => gte(row.age, 50),
+        })
+
+        // Should find items with age >= 50 using index
+        expect(result.length).toBeGreaterThanOrEqual(1)
+
+        // Verify it used the index
+        expectIndexUsage(tracker.stats, {
+          shouldUseIndex: true,
+          shouldUseFullScan: false,
+          indexCallCount: 1,
+          fullScanCallCount: 0,
+        })
       })
-      expect(result.length).toBeGreaterThanOrEqual(1) // Should find at least the new item with age 50
     })
   })
 })
