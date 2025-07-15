@@ -1,4 +1,4 @@
-import type { QueryIR, IncludeRef, PropRef, Func } from "./ir.js"
+import type { QueryIR } from "./ir.js"
 
 /**
  * Optimizes a query by analyzing nested queries (includes) and converting them to joins
@@ -19,6 +19,16 @@ function analyzeNestedQueryRelationship(
   nestedQuery: QueryIR,
   includeAlias: string
 ): { foreignKey: any; localKey: any } | null {
+  // Get the parent table alias
+  const parentAlias = parentQuery.from.type === 'collectionRef' 
+    ? parentQuery.from.alias 
+    : parentQuery.from.alias
+  
+  // Get the nested query table alias
+  const childAlias = nestedQuery.from.type === 'collectionRef'
+    ? nestedQuery.from.alias
+    : nestedQuery.from.alias
+
   // Look for where clauses in the nested query that reference the parent
   if (!nestedQuery.where || nestedQuery.where.length === 0) {
     return null
@@ -27,8 +37,8 @@ function analyzeNestedQueryRelationship(
   for (const whereClause of nestedQuery.where) {
     const relationship = extractRelationshipFromWhereClause(
       whereClause,
-      parentQuery.from.alias,
-      nestedQuery.from.alias
+      parentAlias,
+      childAlias
     )
     
     if (relationship) {

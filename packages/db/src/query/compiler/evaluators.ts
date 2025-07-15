@@ -1,4 +1,4 @@
-import type { BasicExpression, Func, PropRef, IncludeRef } from "../ir.js"
+import type { BasicExpression, Func, PropRef } from "../ir.js"
 import type { NamespacedRow } from "../../types.js"
 
 /**

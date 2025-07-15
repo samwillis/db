@@ -7,7 +7,7 @@ import {
 import { compileExpression } from "./evaluators.js"
 import { compileQuery } from "./index.js"
 import type { IStreamBuilder, JoinType } from "@electric-sql/d2mini"
-import type { CollectionRef, JoinClause, QueryIR, QueryRef } from "../ir.js"
+import type { CollectionRef, JoinClause, IncludeJoinClause, QueryIR, QueryRef } from "../ir.js"
 import type {
   KeyedStream,
   NamespacedAndKeyedStream,
@@ -25,7 +25,7 @@ type QueryCache = WeakMap<QueryIR, ResultStream>
  */
 export function processJoins(
   pipeline: NamespacedAndKeyedStream,
-  joinClauses: Array<JoinClause>,
+  joinClauses: Array<JoinClause | IncludeJoinClause>,
   tables: Record<string, KeyedStream>,
   mainTableAlias: string,
   allInputs: Record<string, KeyedStream>,
@@ -52,7 +52,7 @@ export function processJoins(
  */
 function processJoin(
   pipeline: NamespacedAndKeyedStream,
-  joinClause: JoinClause,
+  joinClause: JoinClause | IncludeJoinClause,
   tables: Record<string, KeyedStream>,
   mainTableAlias: string,
   allInputs: Record<string, KeyedStream>,
@@ -111,7 +111,7 @@ function processJoin(
     })
   )
 
-  // Apply the join operation
+  // All joins are processed as regular joins (no grouping, no array fan-out)
   if (![`inner`, `left`, `right`, `full`].includes(joinType)) {
     throw new Error(`Unsupported join type: ${joinClause.type}`)
   }

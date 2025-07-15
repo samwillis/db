@@ -28,13 +28,21 @@ export type Select = {
   [alias: string]: BasicExpression | Aggregate | IncludeRef
 }
 
-export type Join = Array<JoinClause>
+export type Join = Array<JoinClause | IncludeJoinClause>
 
 export interface JoinClause {
   from: CollectionRef | QueryRef
   type: `left` | `right` | `inner` | `outer` | `full` | `cross`
   left: BasicExpression
   right: BasicExpression
+}
+
+export interface IncludeJoinClause {
+  from: CollectionRef | QueryRef
+  type: `include`
+  left: BasicExpression
+  right: BasicExpression
+  includeAlias: string // The alias for the included data in the result
 }
 
 export type Where = BasicExpression<boolean>

@@ -5,12 +5,14 @@ import type { NamespacedRow } from "../../types.js"
 import type {
   Aggregate,
   BasicExpression,
-  IncludeRef,
+  IncludeRef as IncludeRefType,
   JoinClause,
   OrderBy,
   OrderByClause,
   OrderByDirection,
   QueryIR,
+  Select,
+  Where,
 } from "../ir.js"
 import type {
   Context,
