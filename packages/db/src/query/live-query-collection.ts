@@ -227,9 +227,9 @@ export function liveQueryCollectionOptions<
               if (query.select) {
                 const includeRefs = extractIncludeRefs(query.select)
                 for (const includeRef of includeRefs) {
-                  const parentChildMappings = (includeRef as any).__parentChildMappings
-                  if (parentChildMappings) {
-                    // Extract the parent key from the value
+                  const childUpdates = (includeRef as any).__childUpdates
+                  if (childUpdates) {
+                    // Extract the parent key from the value using the local key path
                     const localKeyPath = (includeRef as any).__localKeyPath
                     let parentKey: any = value
                     if (localKeyPath && localKeyPath.length > 0) {
@@ -241,21 +241,21 @@ export function liveQueryCollectionOptions<
                     
                     if (parentKey != null) {
                       const keyStr = String(parentKey)
-                      const mappings = parentChildMappings.get(keyStr) || []
+                      const updates = childUpdates.get(keyStr) || []
                       
-                      // Apply the mappings to the include collection
+                      // Apply the updates to the include collection
                       const includeCollection = (modifiedValue as any)[includeRef.alias]
                       if (Array.isArray(includeCollection)) {
                         // Create a new array with the modifications
                         let newCollection = [...includeCollection]
                         
-                        for (const mapping of mappings) {
-                          if (mapping.type === 'insert') {
+                        for (const update of updates) {
+                          if (update.type === 'insert') {
                             // Add the child value to the collection
-                            newCollection.push(mapping.childValue)
-                          } else if (mapping.type === 'delete') {
+                            newCollection.push(update.childValue)
+                          } else if (update.type === 'delete') {
                             // Remove the child value from the collection
-                            newCollection = newCollection.filter(item => item !== mapping.childValue)
+                            newCollection = newCollection.filter(item => item !== update.childValue)
                           }
                         }
                         

@@ -56,10 +56,10 @@ export function processIncludes(
         if (left && left.type === 'ref' && right && right.type === 'ref' && 'path' in left && 'path' in right) {
           if (left.path[0] === includeRef.query.from.alias) {
             foreignKeyPath = left.path.slice(1)
-            localKeyPath = right.path.slice(1)
+            localKeyPath = right.path // Use full path including parent alias
           } else if (right.path[0] === includeRef.query.from.alias) {
             foreignKeyPath = right.path.slice(1)
-            localKeyPath = left.path.slice(1)
+            localKeyPath = left.path // Use full path including parent alias
           }
         }
       }
@@ -76,27 +76,7 @@ export function processIncludes(
       // Create a parallel D2 branch for the include subquery
       const includeStream = compileQuery(includeRef.query, allInputs)
       
-      // Create a join between the main pipeline and the include stream
-      // The join will match on the foreign key relationship
-      mainPipeline.pipe(
-        map(([key, namespacedRow]) => {
-          // Extract the parent value from the namespaced row using the local key path
-          let parentValue: any = undefined
-          if (localKeyPath && localKeyPath.length > 0) {
-            // The namespaced row is an array where the first element contains the actual data
-            const data = Array.isArray(namespacedRow) ? namespacedRow[0] : namespacedRow
-            if (data) {
-              parentValue = getValueByPath(data, localKeyPath)
-            }
-          }
-          
-          console.log(`[INCLUDES] Namespaced row for key ${key}:`, JSON.stringify(namespacedRow, null, 2))
-          console.log(`[INCLUDES] Parent value for key ${key}:`, parentValue, 'from path:', localKeyPath)
-          
-          // Return the parent value and key for joining
-          return [key, { parentValue, namespacedRow }]
-        })
-      )
+      console.log(`[INCLUDES] Created include stream for ${includeRef.alias}`)
       
       // Process the include stream output to modify parent collections
       includeStream.pipe(
@@ -114,29 +94,28 @@ export function processIncludes(
             
             console.log(`[INCLUDES] Child foreign key value:`, foreignKeyValue, 'multiplicity:', multiplicity)
             
-            // Find the corresponding parent in the main pipeline
-            // For now, we'll store this information to be processed later
-            if (!(includeRef as any).__parentChildMappings) {
-              ;(includeRef as any).__parentChildMappings = new Map()
+            // Store the child value and multiplicity for later processing in the output
+            if (!(includeRef as any).__childUpdates) {
+              ;(includeRef as any).__childUpdates = new Map()
             }
             
-            const parentChildMappings = (includeRef as any).__parentChildMappings
+            const childUpdates = (includeRef as any).__childUpdates
             const key = String(foreignKeyValue)
             
-            if (!parentChildMappings.has(key)) {
-              parentChildMappings.set(key, [])
+            if (!childUpdates.has(key)) {
+              childUpdates.set(key, [])
             }
             
             if (multiplicity > 0) {
               // Insert/update
-              parentChildMappings.get(key)!.push({
+              childUpdates.get(key)!.push({
                 type: 'insert',
                 childValue,
                 multiplicity
               })
             } else if (multiplicity < 0) {
               // Delete
-              parentChildMappings.get(key)!.push({
+              childUpdates.get(key)!.push({
                 type: 'delete',
                 childValue,
                 multiplicity: Math.abs(multiplicity)
