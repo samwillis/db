@@ -185,6 +185,114 @@ export class BaseQueryBuilder<TContext extends Context = Context> {
   }
 
   /**
+   * Left join another table or subquery to the current query
+   * This is an alias for join(source, onCallback, 'left')
+   *
+   * @param source - An object with a single key-value pair where the key is the table alias and the value is a Collection or subquery
+   * @param onCallback - A function that receives table references and returns the join condition
+   * @returns A QueryBuilder with the joined table available (joined table is optional)
+   *
+   * @example
+   * ```ts
+   * // Left join users with posts
+   * query
+   *   .from({ users: usersCollection })
+   *   .leftJoin({ posts: postsCollection }, ({users, posts}) => eq(users.id, posts.userId))
+   * ```
+   */
+  leftJoin<TSource extends Source>(
+    source: TSource,
+    onCallback: JoinOnCallback<
+      MergeContext<TContext, SchemaFromSource<TSource>>
+    >
+  ): QueryBuilder<
+    MergeContextWithJoinType<TContext, SchemaFromSource<TSource>, `left`>
+  > {
+    return this.join(source, onCallback, `left`)
+  }
+
+  /**
+   * Right join another table or subquery to the current query
+   * This is an alias for join(source, onCallback, 'right')
+   *
+   * @param source - An object with a single key-value pair where the key is the table alias and the value is a Collection or subquery
+   * @param onCallback - A function that receives table references and returns the join condition
+   * @returns A QueryBuilder with the joined table available (main table is optional)
+   *
+   * @example
+   * ```ts
+   * // Right join users with posts
+   * query
+   *   .from({ users: usersCollection })
+   *   .rightJoin({ posts: postsCollection }, ({users, posts}) => eq(users.id, posts.userId))
+   * ```
+   */
+  rightJoin<TSource extends Source>(
+    source: TSource,
+    onCallback: JoinOnCallback<
+      MergeContext<TContext, SchemaFromSource<TSource>>
+    >
+  ): QueryBuilder<
+    MergeContextWithJoinType<TContext, SchemaFromSource<TSource>, `right`>
+  > {
+    return this.join(source, onCallback, `right`)
+  }
+
+  /**
+   * Inner join another table or subquery to the current query
+   * This is an alias for join(source, onCallback, 'inner')
+   *
+   * @param source - An object with a single key-value pair where the key is the table alias and the value is a Collection or subquery
+   * @param onCallback - A function that receives table references and returns the join condition
+   * @returns A QueryBuilder with the joined table available (both tables are required)
+   *
+   * @example
+   * ```ts
+   * // Inner join users with posts
+   * query
+   *   .from({ users: usersCollection })
+   *   .innerJoin({ posts: postsCollection }, ({users, posts}) => eq(users.id, posts.userId))
+   * ```
+   */
+  innerJoin<TSource extends Source>(
+    source: TSource,
+    onCallback: JoinOnCallback<
+      MergeContext<TContext, SchemaFromSource<TSource>>
+    >
+  ): QueryBuilder<
+    MergeContextWithJoinType<TContext, SchemaFromSource<TSource>, `inner`>
+  > {
+    return this.join(source, onCallback, `inner`)
+  }
+
+  /**
+   * Full join another table or subquery to the current query
+   * This is an alias for join(source, onCallback, 'full')
+   *
+   * @param source - An object with a single key-value pair where the key is the table alias and the value is a Collection or subquery
+   * @param onCallback - A function that receives table references and returns the join condition
+   * @returns A QueryBuilder with the joined table available (both tables are optional)
+   *
+   * @example
+   * ```ts
+   * // Full join users with posts
+   * query
+   *   .from({ users: usersCollection })
+   *   .fullJoin({ posts: postsCollection }, ({users, posts}) => eq(users.id, posts.userId))
+   * ```
+   */
+  fullJoin<TSource extends Source>(
+    source: TSource,
+    onCallback: JoinOnCallback<
+      MergeContext<TContext, SchemaFromSource<TSource>>
+    >
+  ): QueryBuilder<
+    MergeContextWithJoinType<TContext, SchemaFromSource<TSource>, `full`>
+  > {
+    return this.join(source, onCallback, `full`)
+  }
+
+  /**
    * Filter rows based on a condition
    *
    * @param callback - A function that receives table references and returns an expression
