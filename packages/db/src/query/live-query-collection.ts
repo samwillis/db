@@ -504,6 +504,16 @@ function extractCollectionsFromQuery(
         }
       }
     }
+
+    // Extract from SELECT clause (includes)
+    if (q.select && typeof q.select === `object`) {
+      for (const value of Object.values(q.select)) {
+        if (value && typeof value === `object` && value.type === `includeRef`) {
+          // Recursively extract from nested query
+          extractFromQuery(value.query)
+        }
+      }
+    }
   }
 
   // Start extraction from the root query

@@ -51,8 +51,8 @@ export type WhereCallback<TContext extends Context> = (
 export type SelectObject<
   T extends Record<
     string,
-    BasicExpression | Aggregate | RefProxy | RefProxyFor<any>
-  > = Record<string, BasicExpression | Aggregate | RefProxy | RefProxyFor<any>>,
+    BasicExpression | Aggregate | RefProxy | RefProxyFor<any> | QueryBuilder<Context>
+  > = Record<string, BasicExpression | Aggregate | RefProxy | RefProxyFor<any> | QueryBuilder<Context>>,
 > = T
 
 // Helper type to get the result type from a select object
@@ -67,7 +67,10 @@ export type ResultTypeFromSelect<TSelectObject> = {
         : TSelectObject[K] extends RefProxyFor<infer T>
           ? // For RefProxyFor, preserve the type as-is (including optionality from joins)
             T
-          : never
+          : TSelectObject[K] extends QueryBuilder<infer TContext>
+            ? // For nested queries, get the result type from the context
+              GetResult<TContext>
+            : never
 }
 
 // Callback type for orderBy clauses
