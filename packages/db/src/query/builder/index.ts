@@ -1,15 +1,18 @@
 import { CollectionImpl } from "../../collection.js"
-import { CollectionRef, QueryRef } from "../ir.js"
+import { CollectionRef, QueryRef, IncludeRef } from "../ir.js"
 import { createRefProxy, isRefProxy, toExpression } from "./ref-proxy.js"
 import type { NamespacedRow } from "../../types.js"
 import type {
   Aggregate,
   BasicExpression,
+  IncludeRef as IncludeRefType,
   JoinClause,
   OrderBy,
   OrderByClause,
   OrderByDirection,
   QueryIR,
+  Select,
+  Where,
 } from "../ir.js"
 import type {
   Context,
@@ -311,7 +314,7 @@ export class BaseQueryBuilder<TContext extends Context = Context> {
     const spreadSentinels = (refProxy as any).__spreadSentinels as Set<string>
 
     // Convert the select object to use expressions, including spread sentinels
-    const select: Record<string, BasicExpression | Aggregate> = {}
+    const select: Record<string, BasicExpression | Aggregate | IncludeRef> = {}
 
     // First, add spread sentinels for any tables that were spread
     for (const spreadAlias of spreadSentinels) {
@@ -329,6 +332,21 @@ export class BaseQueryBuilder<TContext extends Context = Context> {
         (value.type === `agg` || value.type === `func`)
       ) {
         select[key] = value as BasicExpression | Aggregate
+      } else if (value instanceof BaseQueryBuilder) {
+        // Handle nested queries - create an IncludeRef
+        const nestedQuery = value._getQuery()
+        if (!nestedQuery.from) {
+          throw new Error(`Nested query must have a from clause`)
+        }
+        
+        // For now, we'll create a simple IncludeRef without foreign key mapping
+        // This will be enhanced in the optimizer to extract the relationship
+        select[key] = new IncludeRef(
+          nestedQuery,
+          key,
+          [], // foreignKeyPath - will be determined by optimizer
+          []  // localKeyPath - will be determined by optimizer
+        )
       } else {
         select[key] = toExpression(value)
       }

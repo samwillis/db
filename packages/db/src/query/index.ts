@@ -46,6 +46,9 @@ export type { Ref } from "./builder/types.js"
 // Compiler
 export { compileQuery } from "./compiler/index.js"
 
+// Optimizer
+export { optimizeQuery } from "./optimizer.js"
+
 // Live query collection utilities
 export {
   createLiveQueryCollection,

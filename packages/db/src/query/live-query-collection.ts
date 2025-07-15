@@ -2,6 +2,7 @@ import { D2, MultiSet, output } from "@electric-sql/d2mini"
 import { createCollection } from "../collection.js"
 import { compileQuery } from "./compiler/index.js"
 import { buildQuery, getQueryIR } from "./builder/index.js"
+import { processIncludes, extractIncludeRefs } from "./compiler/includes.js"
 import type { InitialQueryBuilder, QueryBuilder } from "./builder/index.js"
 import type { Collection } from "../collection.js"
 import type {
@@ -221,17 +222,65 @@ export function liveQueryCollectionOptions<
                 string | undefined,
               ]
 
+              // Apply include modifications to the value
+              let modifiedValue = value
+              if (query.select) {
+                const includeRefs = extractIncludeRefs(query.select)
+                for (const includeRef of includeRefs) {
+                  const childUpdates = (includeRef as any).__childUpdates
+                  if (childUpdates) {
+                    // Extract the parent key from the value using the local key path
+                    const localKeyPath = (includeRef as any).__localKeyPath
+                    let parentKey: any = value
+                    if (localKeyPath && localKeyPath.length > 0) {
+                      for (const segment of localKeyPath) {
+                        if (parentKey == null) break
+                        parentKey = parentKey[segment]
+                      }
+                    }
+                    
+                    if (parentKey != null) {
+                      const keyStr = String(parentKey)
+                      const updates = childUpdates.get(keyStr) || []
+                      
+                      // Apply the updates to the include collection
+                      const includeCollection = (modifiedValue as any)[includeRef.alias]
+                      if (Array.isArray(includeCollection)) {
+                        // Create a new array with the modifications
+                        let newCollection = [...includeCollection]
+                        
+                        for (const update of updates) {
+                          if (update.type === 'insert') {
+                            // Add the child value to the collection
+                            newCollection.push(update.childValue)
+                          } else if (update.type === 'delete') {
+                            // Remove the child value from the collection
+                            newCollection = newCollection.filter(item => item !== update.childValue)
+                          }
+                        }
+                        
+                        // Update the value with the modified collection
+                        modifiedValue = {
+                          ...modifiedValue,
+                          [includeRef.alias]: newCollection
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+
               const changes = acc.get(key) || {
                 deletes: 0,
                 inserts: 0,
-                value,
+                value: modifiedValue,
                 orderByIndex,
               }
               if (multiplicity < 0) {
                 changes.deletes += Math.abs(multiplicity)
               } else if (multiplicity > 0) {
                 changes.inserts += multiplicity
-                changes.value = value
+                changes.value = modifiedValue
                 changes.orderByIndex = orderByIndex
               }
               acc.set(key, changes)
@@ -282,6 +331,14 @@ export function liveQueryCollectionOptions<
           commit()
         })
       )
+
+      // Process includes before finalizing the graph
+      if (query.select) {
+        const includeRefs = extractIncludeRefs(query.select)
+        if (includeRefs.length > 0) {
+          processIncludes(includeRefs, inputs as Record<string, KeyedStream>, collections, pipeline)
+        }
+      }
 
       graph.finalize()
 
@@ -501,6 +558,16 @@ function extractCollectionsFromQuery(
       for (const joinClause of q.join) {
         if (joinClause.from) {
           extractFromSource(joinClause.from)
+        }
+      }
+    }
+
+    // Extract from SELECT clause (includes)
+    if (q.select && typeof q.select === `object`) {
+      for (const value of Object.values(q.select)) {
+        if (value && typeof value === `object` && 'type' in value && value.type === `includeRef` && 'query' in value) {
+          // Recursively extract from nested query
+          extractFromQuery((value as any).query)
         }
       }
     }

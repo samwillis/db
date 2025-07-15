@@ -25,16 +25,24 @@ export interface QueryIR {
 export type From = CollectionRef | QueryRef
 
 export type Select = {
-  [alias: string]: BasicExpression | Aggregate
+  [alias: string]: BasicExpression | Aggregate | IncludeRef
 }
 
-export type Join = Array<JoinClause>
+export type Join = Array<JoinClause | IncludeJoinClause>
 
 export interface JoinClause {
   from: CollectionRef | QueryRef
   type: `left` | `right` | `inner` | `outer` | `full` | `cross`
   left: BasicExpression
   right: BasicExpression
+}
+
+export interface IncludeJoinClause {
+  from: CollectionRef | QueryRef
+  type: `include`
+  left: BasicExpression
+  right: BasicExpression
+  includeAlias: string // The alias for the included data in the result
 }
 
 export type Where = BasicExpression<boolean>
@@ -79,6 +87,18 @@ export class QueryRef extends BaseExpression {
   constructor(
     public query: QueryIR,
     public alias: string
+  ) {
+    super()
+  }
+}
+
+export class IncludeRef extends BaseExpression {
+  public type = `includeRef` as const
+  constructor(
+    public query: QueryIR,
+    public alias: string,
+    public foreignKeyPath: Array<string>, // Path to the foreign key in the parent query
+    public localKeyPath: Array<string>    // Path to the local key in the included query
   ) {
     super()
   }

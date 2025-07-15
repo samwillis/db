@@ -1,6 +1,6 @@
 import { map } from "@electric-sql/d2mini"
 import { compileExpression } from "./evaluators.js"
-import type { Aggregate, BasicExpression, Select } from "../ir.js"
+import type { Aggregate, BasicExpression, Select, IncludeRef } from "../ir.js"
 import type {
   KeyedStream,
   NamespacedAndKeyedStream,
@@ -28,23 +28,30 @@ export function processSelectToResults(
       // Extract the table alias from the sentinel key
       const tableAlias = alias.replace(`__SPREAD_SENTINEL__`, ``)
       spreadAliases.push(tableAlias)
+    } else if (isIncludeRefExpression(expression)) {
+      // Handle includeRef expressions by adding empty collection items
+      compiledSelect.push({
+        alias,
+        compiledExpression: () => [], // Start with empty array
+      })
+    } else if (isAggregateExpression(expression)) {
+      // For aggregates, we'll store the expression info for GROUP BY processing
+      // but still compile a placeholder that will be replaced later
+      compiledSelect.push({
+        alias,
+        compiledExpression: () => null, // Placeholder - will be handled by GROUP BY
+      })
     } else {
-      if (isAggregateExpression(expression)) {
-        // For aggregates, we'll store the expression info for GROUP BY processing
-        // but still compile a placeholder that will be replaced later
-        compiledSelect.push({
-          alias,
-          compiledExpression: () => null, // Placeholder - will be handled by GROUP BY
-        })
-      } else {
-        compiledSelect.push({
-          alias,
-          compiledExpression: compileExpression(expression as BasicExpression),
-        })
-      }
+      compiledSelect.push({
+        alias,
+        compiledExpression: compileExpression(expression as BasicExpression),
+      })
     }
   }
 
+  // Process includes first to populate their caches
+  
+  // Create a pipeline that processes includes and then evaluates select expressions
   return pipeline.pipe(
     map(([key, namespacedRow]) => {
       const selectResults: Record<string, any> = {}
@@ -147,9 +154,18 @@ export function processSelect(
  * Helper function to check if an expression is an aggregate
  */
 function isAggregateExpression(
-  expr: BasicExpression | Aggregate
+  expr: BasicExpression | Aggregate | IncludeRef
 ): expr is Aggregate {
   return expr.type === `agg`
+}
+
+/**
+ * Helper function to check if an expression is an includeRef
+ */
+function isIncludeRefExpression(
+  expr: BasicExpression | Aggregate | IncludeRef
+): expr is IncludeRef {
+  return expr.type === `includeRef`
 }
 
 /**
