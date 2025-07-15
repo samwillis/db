@@ -1,5 +1,5 @@
 ---
-"@tanstack/db": minor
+"@tanstack/db": patch
 ---
 
 Add join type aliases to query builder
