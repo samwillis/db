@@ -2270,4 +2270,203 @@ describe(`QueryCollection`, () => {
       expect(collection.utils.isError()).toBe(true)
     })
   })
+
+  describe(`Object field updates with refetch: false`, () => {
+    interface TodoWithMetadata {
+      id: string
+      name: string
+      metadata: { createdBy: string }
+    }
+
+    it(`should correctly handle multiple updates to object fields without refetch`, async () => {
+      const queryKey = [`objectFieldUpdateTest`]
+      const serverTodo: TodoWithMetadata = {
+        id: `1`,
+        name: `Test Todo`,
+        metadata: { createdBy: `user1` },
+      }
+      const todos: Array<TodoWithMetadata> = [serverTodo]
+
+      // Simulated server update function
+      const updateTodoOnServer = async (
+        id: string,
+        changes: Partial<TodoWithMetadata>
+      ): Promise<TodoWithMetadata> => {
+        await new Promise((resolve) => setTimeout(resolve, 50))
+        const todo = todos.find((t) => t.id === id)
+        if (todo) {
+          Object.assign(todo, changes)
+        }
+        return todo!
+      }
+
+      const queryFn = vi
+        .fn()
+        .mockImplementation(() => Promise.resolve([...todos]))
+
+      const onUpdate = vi
+        .fn()
+        .mockImplementation(async ({ transaction, collection }) => {
+          const updates = transaction.mutations.map((m: any) => ({
+            id: m.key,
+            changes: m.changes,
+          }))
+
+          const serverItems = await Promise.all(
+            updates.map((update: any) =>
+              updateTodoOnServer(update.id, update.changes)
+            )
+          )
+
+          // Write server response to collection
+          collection.utils.writeBatch(() => {
+            serverItems.forEach((serverItem: TodoWithMetadata) => {
+              collection.utils.writeUpdate(serverItem)
+            })
+          })
+
+          return { refetch: false }
+        })
+
+      const config: QueryCollectionConfig<TodoWithMetadata> = {
+        id: `object-field-update-test`,
+        queryClient,
+        queryKey,
+        queryFn,
+        getKey: (item) => item.id,
+        onUpdate,
+        startSync: true,
+      }
+
+      const options = queryCollectionOptions(config)
+      const collection = createCollection(options)
+
+      // Wait for collection to be ready
+      await vi.waitFor(() => {
+        expect(collection.status).toBe(`ready`)
+        expect(collection.size).toBe(1)
+      })
+
+      // Verify initial state
+      expect(collection.get(`1`)?.metadata.createdBy).toBe(`user1`)
+
+      // First update - change metadata to user2
+      const update1 = collection.update(`1`, (draft) => {
+        draft.metadata = { createdBy: `user2` }
+      })
+      await update1.isPersisted.promise
+
+      // Wait for the update to complete
+      await vi.waitFor(() => {
+        expect(collection.get(`1`)?.metadata.createdBy).toBe(`user2`)
+      })
+
+      // Second update - change metadata to user3
+      const update2 = collection.update(`1`, (draft) => {
+        draft.metadata = { createdBy: `user3` }
+      })
+      await update2.isPersisted.promise
+
+      // Wait for the update to complete and verify it persisted correctly
+      await vi.waitFor(() => {
+        expect(collection.get(`1`)?.metadata.createdBy).toBe(`user3`)
+      })
+
+      // Third update - change metadata to user4
+      const update3 = collection.update(`1`, (draft) => {
+        draft.metadata = { createdBy: `user4` }
+      })
+      await update3.isPersisted.promise
+
+      // Wait for the update to complete and verify it persisted correctly
+      await vi.waitFor(() => {
+        expect(collection.get(`1`)?.metadata.createdBy).toBe(`user4`)
+      })
+
+      // Verify the final synced state is correct
+      expect(collection._state.syncedData.get(`1`)?.metadata.createdBy).toBe(
+        `user4`
+      )
+
+      // Verify there are no active optimistic updates
+      expect(collection._state.optimisticUpserts.size).toBe(0)
+    })
+
+    it(`should not rollback object field updates after server response`, async () => {
+      const queryKey = [`objectFieldRollbackTest`]
+      let serverTodo: TodoWithMetadata = {
+        id: `1`,
+        name: `Test Todo`,
+        metadata: { createdBy: `user1` },
+      }
+
+      const queryFn = vi
+        .fn()
+        .mockImplementation(() => Promise.resolve([{ ...serverTodo }]))
+
+      const onUpdate = vi
+        .fn()
+        .mockImplementation(async ({ transaction, collection }) => {
+          await new Promise((resolve) => setTimeout(resolve, 50))
+
+          // Simulate server accepting the update
+          const mutation = transaction.mutations[0]!
+          serverTodo = { ...serverTodo, ...mutation.changes }
+
+          collection.utils.writeBatch(() => {
+            collection.utils.writeUpdate({ ...serverTodo })
+          })
+
+          return { refetch: false }
+        })
+
+      const config: QueryCollectionConfig<TodoWithMetadata> = {
+        id: `object-field-rollback-test`,
+        queryClient,
+        queryKey,
+        queryFn,
+        getKey: (item) => item.id,
+        onUpdate,
+        startSync: true,
+      }
+
+      const options = queryCollectionOptions(config)
+      const collection = createCollection(options)
+
+      await vi.waitFor(() => {
+        expect(collection.status).toBe(`ready`)
+      })
+
+      // Update metadata
+      const update1 = collection.update(`1`, (draft) => {
+        draft.metadata = { createdBy: `user2` }
+      })
+
+      // Optimistic update should be visible immediately
+      expect(collection.get(`1`)?.metadata.createdBy).toBe(`user2`)
+
+      await update1.isPersisted.promise
+
+      // After server response, the value should still be user2
+      expect(collection.get(`1`)?.metadata.createdBy).toBe(`user2`)
+
+      // Second update
+      const update2 = collection.update(`1`, (draft) => {
+        draft.metadata = { createdBy: `user3` }
+      })
+
+      // Optimistic update should be visible immediately
+      expect(collection.get(`1`)?.metadata.createdBy).toBe(`user3`)
+
+      await update2.isPersisted.promise
+
+      // After server response, the value should still be user3 (not rolled back to user2)
+      expect(collection.get(`1`)?.metadata.createdBy).toBe(`user3`)
+
+      // Verify synced state is correct
+      expect(collection._state.syncedData.get(`1`)?.metadata.createdBy).toBe(
+        `user3`
+      )
+    })
+  })
 })

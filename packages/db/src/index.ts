@@ -9,6 +9,7 @@ export * from "./optimistic-action"
 export * from "./local-only"
 export * from "./local-storage"
 export * from "./errors"
+export { deepEquals } from "./utils"
 
 // Index system exports
 export * from "./indexes/base-index.js"
