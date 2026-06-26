@@ -5168,6 +5168,90 @@ describe(`includes subqueries`, () => {
       expect(hoodie.priceRanges).toEqual([])
     })
 
+    it(`keeps routing when one of multiple same-parent siblings sharing a nested key is deleted`, async () => {
+      type Product = { id: number; title: string }
+      type PriceRange = { id: number; productId: number; regionId: number }
+      type Region = { id: number; name: string }
+
+      const products = createCollection(
+        localOnlyCollectionOptions<Product>({
+          id: `shared-corr-same-parent-products`,
+          getKey: (p) => p.id,
+          initialData: [{ id: 1, title: `T-Shirt` }],
+        }),
+      )
+      const priceRanges = createCollection(
+        localOnlyCollectionOptions<PriceRange>({
+          id: `shared-corr-same-parent-price-ranges`,
+          getKey: (r) => r.id,
+          initialData: [
+            { id: 1, productId: 1, regionId: 1 },
+            { id: 2, productId: 1, regionId: 1 },
+          ],
+        }),
+      )
+      const regions = createCollection(
+        localOnlyCollectionOptions<Region>({
+          id: `shared-corr-same-parent-regions`,
+          getKey: (r) => r.id,
+          initialData: [{ id: 1, name: `Europe` }],
+        }),
+      )
+
+      await Promise.all([
+        products.preload(),
+        priceRanges.preload(),
+        regions.preload(),
+      ])
+
+      const collection = createLiveQueryCollection({
+        id: `shared-corr-same-parent-live`,
+        query: (q) =>
+          q.from({ p: products }).select(({ p }) => ({
+            id: p.id,
+            title: p.title,
+            priceRanges: toArray(
+              q
+                .from({ pr: priceRanges })
+                .where(({ pr }) => eq(pr.productId, p.id))
+                .select(({ pr }) => ({
+                  id: pr.id,
+                  regionId: pr.regionId,
+                  region: toArray(
+                    q
+                      .from({ r: regions })
+                      .where(({ r }) => eq(r.id, pr.regionId))
+                      .select(({ r }) => ({ id: r.id, name: r.name })),
+                  ),
+                })),
+            ),
+          })),
+      })
+      await collection.preload()
+
+      priceRanges.delete(1)
+      await new Promise((r) => setTimeout(r, 50))
+
+      regions.update(1, (draft) => {
+        draft.name = `Renamed Europe`
+      })
+      await new Promise((r) => setTimeout(r, 50))
+
+      expect(toTree(collection)).toEqual([
+        {
+          id: 1,
+          title: `T-Shirt`,
+          priceRanges: [
+            {
+              id: 2,
+              regionId: 1,
+              region: [{ id: 1, name: `Renamed Europe` }],
+            },
+          ],
+        },
+      ])
+    })
+
     // The shared-correlation-key routing is independent of how each level is
     // materialized, so the same guarantee must hold when the nested levels are
     // left as live Collections (no toArray/materialize wrapper).
